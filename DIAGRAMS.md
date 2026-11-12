@@ -1,14 +1,14 @@
 # Servo Tester Diagrams
 
-These diagrams are based on the current source, especially `src/main.cpp` and
-`src/ServoTesterApp.cpp`. Mermaid diagrams render on GitHub.
+These diagrams describe the current firmware in `src/`. Mermaid diagrams
+render on GitHub.
 
-## Principal wiring
+## Principal signal wiring
 
-Signal pin assignments are taken from `src/main.cpp`. The firmware does not
-define power connections; follow the requirements of the specific board,
-display, and servo. If the servo uses a separate supply, its ground must be
-connected to ESP32 ground.
+Signal pin assignments and the OLED bus clock are defined in `src/main.cpp`
+and `src/OledDisplay.cpp`. Power pins are intentionally not specified: supply
+requirements depend on the exact board, OLED, and servo. Use a suitable servo
+supply; if it is separate, connect its ground to ESP32 ground.
 
 ```mermaid
 flowchart LR
@@ -17,36 +17,36 @@ flowchart LR
         P0["GPIO 0"]
         P1["GPIO 1"]
         P3["GPIO 3<br/>INPUT_PULLUP"]
-        P6["GPIO 6"]
         P5["GPIO 5"]
+        P6["GPIO 6"]
     end
 
     subgraph SERVO["Hobby servo"]
         SIG["Signal"]
     end
     subgraph ENCODER["Rotary encoder"]
-        CLK["CLK"]
-        DT["DT"]
+        A["A / CLK"]
+        B["B / DT"]
         SW["Push switch"]
     end
-    subgraph OLED["SSD1306 72x40 OLED<br/>I2C"]
+    subgraph OLED["SSD1306 72x40 ER OLED<br/>Hardware I2C, 400 kHz"]
         SDA["SDA"]
         SCL["SCL"]
     end
 
-    P4 -->|servo control signal| SIG
-    P0 -->|encoder clock| CLK
-    P1 -->|encoder data| DT
-    P3 -->|button input| SW
-    P6 -->|I2C data| SDA
-    P5 -->|I2C clock| SCL
+    P4 -->|servo control pulse| SIG
+    P0 -->|encoder A| A
+    P1 -->|encoder B| B
+    P3 -->|active-low button| SW
+    P5 -->|I2C data| SDA
+    P6 -->|I2C clock| SCL
 ```
 
 ## UML class diagram
 
-`main.cpp` creates the concrete hardware adapters and injects them into
-`ServoTesterApp`. The diagram shows the application classes and their key
-public and internal methods; external library internals are omitted.
+`main.cpp` constructs the concrete adapters and injects them into
+`ServoTesterApp`. External Arduino and library classes are shown only where
+they clarify an adapter's implementation.
 
 ```mermaid
 classDiagram
@@ -75,6 +75,7 @@ classDiagram
         +maxPulse: int
         +step: int
         +sweepSpeed: int
+        +maxAngle: int
         +clampAll()
     }
 
@@ -85,6 +86,7 @@ classDiagram
     }
 
     class NvsSettingsStorage {
+        -Preferences _prefs
         +load(settings)
         +save(settings)
     }
@@ -99,6 +101,7 @@ classDiagram
     }
 
     class OledDisplay {
+        -U8G2_SSD1306_72X40_ER_F_HW_I2C _u8g2
         +begin()
         +showBoot()
         +showRunning(mode, pulseUs, angleDeg)
@@ -107,6 +110,7 @@ classDiagram
     }
 
     class RotaryEncoder {
+        -ESP_Knob* _knob
         +begin()
         +readDelta()
     }
@@ -160,6 +164,7 @@ classDiagram
         MaxPulse
         Step
         SweepSpeed
+        MaxAngle
         Save
         Back
     }
@@ -171,9 +176,9 @@ classDiagram
     ServoTesterApp --> RotaryEncoder : uses
     ServoTesterApp --> Button : uses
     ServoTesterApp --> ServoOutput : uses
-    ServoTesterApp *-- Settings : owns current settings
-    ServoTesterApp --> Mode : tracks
-    ServoTesterApp --> MenuState : tracks
+    ServoTesterApp *-- Settings : owns runtime settings
+    ServoTesterApp --> Mode : current mode
+    ServoTesterApp --> MenuState : current menu
     ServoTesterApp ..> MainMenuItem : handles
     ServoTesterApp ..> SettingsItem : handles
     Button ..> ButtonEvent : emits
@@ -181,54 +186,51 @@ classDiagram
     Display ..> Settings : displays
 ```
 
-## UML-style application workflow
-
-The startup path and recurring application loop are represented as an
-activity-style flow. The loop polls controls, updates the sweep if active,
-draws the screen for the current menu state, then waits 20 ms.
+## Application workflow
 
 ```mermaid
 flowchart TD
-    START([Power on / reset]) --> SETUP["setup(): Serial.begin(115200)"]
+    START([Power on or reset]) --> SETUP["setup(): start Serial at 115200"]
     SETUP --> LOAD["app.begin(): load settings from NVS"]
-    LOAD --> CLAMP["Clamp settings to supported ranges"]
-    CLAMP --> INIT["Initialize encoder, button, servo, and display"]
-    INIT --> CENTER["Set servo pulse to 1500 us"]
-    CENTER --> BOOT["Show boot screen; wait 800 ms"]
+    LOAD --> CLAMP["Clamp all loaded/default settings"]
+    CLAMP --> INIT["Initialize encoder, button, servo, and OLED"]
+    INIT --> INITIAL_PULSE["Command servo to 1500 us"]
+    INITIAL_PULSE --> BOOT["Show boot screen for 800 ms"]
     BOOT --> LOOP["app.loop()"]
 
-    LOOP --> READ["Read encoder delta"]
-    READ --> HAS_DELTA{"Delta nonzero?"}
-    HAS_DELTA -- Yes --> MENU_OFF{"Menu is Off?"}
-    MENU_OFF -- Yes --> ACTIVE_MODE["Apply delta to active mode"]
-    MENU_OFF -- No --> MENU_EDIT["Move selection or edit setting"]
-    ACTIVE_MODE --> BUTTON_POLL
-    MENU_EDIT --> BUTTON_POLL
-    HAS_DELTA -- No --> BUTTON_POLL["Poll button"]
+    LOOP --> READ["Read encoder count delta"]
+    READ --> HAS_DELTA{"Delta != 0?"}
+    HAS_DELTA -- Yes --> MENU_OFF{"Menu state is Off?"}
+    MENU_OFF -- Yes --> RUN_EDIT["Edit the active mode's value"]
+    MENU_OFF -- No --> MENU_EDIT["Move menu selection or edit setting"]
+    RUN_EDIT --> POLL
+    MENU_EDIT --> POLL
+    HAS_DELTA -- No --> POLL["Poll active-low button"]
 
-    BUTTON_POLL --> EVENT{"Click or long press?"}
-    EVENT -- No --> SWEEP_CHECK
-    EVENT -- Yes --> BUTTON_ACTION["Handle event for current menu state"]
-    BUTTON_ACTION --> SWEEP_CHECK
+    POLL --> BUTTON_EVENT{"Click or long press?"}
+    BUTTON_EVENT -- Yes --> HANDLE["Handle event for current mode/menu"]
+    BUTTON_EVENT -- No --> SWEEP_CHECK
+    HANDLE --> SWEEP_CHECK{"Mode is Sweep and menu is Off?"}
 
-    SWEEP_CHECK{"Mode is Sweep and menu is Off?"}
-    SWEEP_CHECK -- Yes --> INTERVAL{"Sweep interval elapsed?"}
-    INTERVAL -- Yes --> ADVANCE["Advance pulse by step; reverse at limits"]
-    INTERVAL -- No --> RENDER
-    ADVANCE --> RENDER["Render running view or active menu"]
+    SWEEP_CHECK -- Yes --> ELAPSED{"Configured interval elapsed?"}
+    ELAPSED -- Yes --> SWEEP["Advance pulse by step;<br/>reverse at min/max"]
+    ELAPSED -- No --> RENDER
+    SWEEP --> RENDER["Render running view or active menu"]
     SWEEP_CHECK -- No --> RENDER
 
-    RENDER --> WAIT["Wait 20 ms"]
+    RENDER --> WAIT["delay(20 ms)"]
     WAIT --> LOOP
 ```
 
-### Input and menu behavior
+### Input and persistence details
 
-- On the running screen, turning the encoder edits the current mode's value.
-  In Step mode, a button click advances the servo by one step; in other modes
-  it cycles to the next mode.
-- A long press opens the main menu. A main-menu click selects a mode or opens
-  Settings; a long press returns to the running screen.
-- In Settings, turning the encoder edits the selected value. A click advances
-  to the next item, saves when **Save** is selected, or returns without saving
-  when **Back** is selected. A long press returns to the main menu.
+- In Manual mode, encoder rotation changes pulse width by `step`; in Sweep
+  mode it changes the interval; in Step mode it changes `step`; Center ignores
+  encoder rotation.
+- A short press cycles mode except in Step mode, where it advances the pulse
+  by one step. A long press opens the main menu.
+- Settings are written only by selecting **Save**. **Back** and long-press
+  return to the main menu without writing NVS; edits remain active until reset
+  and can still be saved later.
+- The angle display maps the configured pulse range to 0° through `maxAngle`;
+  it does not read the servo's physical position.

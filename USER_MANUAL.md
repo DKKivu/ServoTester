@@ -1,104 +1,118 @@
 # Servo Tester User Manual
 
-## What it does
+## Overview
 
-Servo Tester drives a hobby servo from an ESP32-C3 and lets you adjust the
-servo signal with a rotary encoder. An OLED shows the selected mode, pulse
-width, and an estimated angle.
+Servo Tester runs on an ESP32-C3 DevKitM-1 and sends a servo control pulse
+through GPIO 4. Use the rotary encoder and its push button to select a mode,
+move the servo, and adjust settings. The OLED displays the mode, commanded
+pulse width, and an estimated angle.
 
-The angle is calculated by mapping the configured minimum and maximum pulse
-widths to 0° and 180°. It is an estimate, not feedback from the servo.
+The angle is calculated from the commanded pulse width. It is not measured
+position feedback, and actual servo travel varies by servo.
 
-## Before powering on
-
-1. Connect the components according to the pin table below.
-2. Connect the servo's signal wire to GPIO 4.
-3. Power the servo from a supply appropriate for that servo. Do not power the
-   servo from an ESP32 GPIO. If the servo has a separate supply, connect that
-   supply's ground to ESP32 ground.
-4. Check the OLED module's voltage requirements before connecting its power.
-5. Keep the servo mechanism clear to move through its range.
-
-### Connections
+## Wiring
 
 | Component signal | ESP32-C3 GPIO |
 | --- | ---: |
 | Servo signal | 4 |
-| Encoder CLK | 0 |
-| Encoder DT | 1 |
+| Encoder A / CLK | 0 |
+| Encoder B / DT | 1 |
 | Encoder push button | 3 |
-| OLED SDA | 6 |
-| OLED SCL | 5 |
+| OLED SDA | 5 |
+| OLED SCL | 6 |
 
-The configured board is ESP32-C3 DevKitM-1. The display is configured as an
-SSD1306 72x40 I2C OLED.
+The configured display driver is U8g2 `SSD1306_72X40_ER`, using hardware I2C.
+The button input uses the ESP32's internal pull-up.
 
-## Using the controls
+The firmware does not configure or supply component power. Check the
+requirements of your exact ESP32 board, OLED, and servo. Use a supply suitable
+for the servo; if it is powered separately, connect its ground to ESP32 ground.
+Keep the servo linkage clear before powering it, especially when testing
+unknown pulse limits.
 
-- **Turn the encoder** to change the active value or move through a menu.
-- **Short-press** the encoder button to select a menu item or perform the
-  current mode's button action.
-- **Press and hold** the button to enter or leave menus, as described below.
+## Startup
 
-### Running modes
+At startup the firmware:
 
-The display shows the current mode, pulse width in microseconds (`P`), and
-estimated angle in degrees (`A`).
+1. Loads saved settings from ESP32 non-volatile storage, or uses the defaults.
+2. Clamps loaded values to the supported ranges.
+3. Initializes the encoder, button, servo, and OLED.
+4. Commands a 1500 µs servo pulse.
+5. Shows the boot screen briefly, then enters the running screen in Manual
+   mode.
 
-| Mode | Encoder rotation | Short-press |
+The boot screen remains for 800 ms. The main loop then processes input, updates
+the sweep if active, redraws the current screen, and waits 20 ms.
+
+## Running screen and modes
+
+The OLED shows the mode name, `P` (pulse width in microseconds), and `A`
+(calculated angle in degrees).
+
+| Mode | Turn encoder | Short-press button |
 | --- | --- | --- |
-| Manual | Change pulse width by the configured step | Switch to the next mode |
-| Sweep | Adjust sweep interval | Switch to the next mode |
-| Center | No effect | Switch to the next mode |
-| Step | Adjust step size | Advance the pulse by one step |
+| Manual | Change pulse by the configured step | Cycle to the next mode |
+| Sweep | Change sweep interval | Cycle to the next mode |
+| Center | No effect | Cycle to the next mode |
+| Step | Change step size | Advance pulse by one step |
 
-The running-mode order is **Manual → Sweep → Center → Step → Manual**. You can
-switch modes with short-presses while running or choose a mode from the main
-menu.
+The mode cycle is **Manual → Sweep → Center → Step → Manual**. Encoder changes
+to pulse width are clamped to the configured minimum and maximum. Center moves
+to the arithmetic midpoint of those two pulse settings. Sweep moves toward
+each endpoint by one configured step at each interval and reverses at an
+endpoint.
 
-In Sweep mode, the servo moves back and forth between the minimum and maximum
-pulse settings. The interval is the delay between sweep steps: a smaller
-interval makes the sweep faster.
+The displayed angle maps the configured minimum pulse to 0° and maximum pulse
+to the configured maximum angle. The default maximum angle is 240°; this is a
+display scale only and does not change servo mechanics or calibrate the servo.
 
-## Menus
+## Button and menu navigation
 
-### Open the main menu
+The button is read as active-low with an internal pull-up. A press released
+within 500 ms is reported as a click; a held press is reported as a long press
+after 700 ms. A release between those timings does not produce a click.
 
-Press and hold the encoder button while on the running screen. Turn the encoder
-to highlight an item, then short-press to select it.
+### Main menu
 
-The main menu contains **Manual**, **Sweep**, **Center**, **Step**, and
-**Settings**. Press and hold to close the main menu and return to the running
-screen.
+- On the running screen, long-press to open the main menu.
+- Turn the encoder to highlight **Manual**, **Sweep**, **Center**, **Step**, or
+  **Settings**.
+- Short-press a mode to activate it and return to the running screen.
+- Select **Settings** to open the settings menu.
+- Long-press in the main menu to return to the running screen.
 
-### Change settings
+### Settings menu
 
-1. Select **Settings** from the main menu.
-2. Turn the encoder to change the highlighted setting.
-3. Short-press to move to the next setting.
-4. Select **Save** and short-press to save, or select **Back** to return without
-   saving.
-5. Press and hold to return to the main menu.
+The settings list is **MinPulse**, **MaxPulse**, **Step**, **SweepSpd**,
+**MaxAngle**, **Save**, and **Back**. Three menu rows are shown at a time.
 
-Settings have these defaults and limits:
+- On a numeric setting, turn the encoder to edit it and short-press to move to
+  the next item.
+- **Save** writes all current settings to NVS and returns to the main menu.
+- **Back** returns to the main menu without writing settings to NVS.
+- Long-press also returns to the main menu without writing settings to NVS.
 
-| Setting | Default | Allowed range |
+Changes made before **Save** remain active in the current running session,
+including after leaving the settings menu. They are lost after reset or power
+off unless saved.
+
+### Settings defaults and limits
+
+| Setting | Default | Range |
 | --- | ---: | ---: |
-| Minimum pulse | 500 µs | 500–1500 µs |
+| Minimum pulse | 500 µs | 50–1500 µs |
 | Maximum pulse | 2500 µs | 1500–2500 µs |
 | Step | 10 µs | 1–50 µs |
 | Sweep interval | 20 ms | 5–100 ms |
+| Display maximum angle | 240° | 90–360° |
 
-The minimum and maximum pulse settings are independently limited around
-1500 µs; the firmware does not enforce a non-zero gap between them.
+Minimum and maximum pulse are bounded independently; the firmware does not
+enforce that the minimum is less than the maximum. Use compatible limits for
+your servo.
 
-Saved settings are kept in the ESP32's non-volatile storage and loaded the next
-time the device starts. At startup, the output is set to 1500 µs.
+## Firmware build and upload
 
-## Firmware setup
-
-The project is configured for PlatformIO and the Arduino framework. From the
-project directory:
+Install PlatformIO and run these commands from the project directory:
 
 ```sh
 pio run
@@ -106,4 +120,5 @@ pio run --target upload
 pio device monitor
 ```
 
-The serial monitor is configured for **115200 baud**.
+The configured PlatformIO environment is `esp32-c3-devkitm-1` and the serial
+monitor baud rate is 115200.
