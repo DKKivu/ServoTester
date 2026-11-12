@@ -11,8 +11,8 @@ static constexpr uint8_t PIN_SERVO    = 4;
 static constexpr uint8_t PIN_ENC_CLK  = 0;
 static constexpr uint8_t PIN_ENC_DT   = 1;
 static constexpr uint8_t PIN_ENC_SW   = 3;
-static constexpr uint8_t PIN_OLED_SDA = 6;
-static constexpr uint8_t PIN_OLED_SCL = 5;
+static constexpr uint8_t PIN_OLED_SDA = 5;
+static constexpr uint8_t PIN_OLED_SCL = 6;
 
 // --- зависимости (composition root) ---
 static NvsSettingsStorage storage;

@@ -87,6 +87,9 @@ void ServoTesterApp::handleMenuEncoder(int delta) {
         case SettingsItem::SweepSpeed:
             _settings.sweepSpeed = constrain(_settings.sweepSpeed + delta, 5, 100);
             break;
+        case SettingsItem::MaxAngle:
+            _settings.maxAngle = constrain(_settings.maxAngle + delta, 90, 360);
+            break;
         default: break;
     }
 }
@@ -197,7 +200,7 @@ void ServoTesterApp::updateSweep(unsigned long now) {
 
 int ServoTesterApp::angleFromPulse() const {
     return static_cast<int>(map(_servo.getPulse(),
-                                _settings.minPulse, _settings.maxPulse, 0, 180));
+                                _settings.minPulse, _settings.maxPulse, 0, _settings.maxAngle)); // <-- maxAngle
 }
 
 // -------------------- отрисовка --------------------

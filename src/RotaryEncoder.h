@@ -1,26 +1,27 @@
 #pragma once
-#include <AiEsp32RotaryEncoder.h>
+#include <ESP_Knob.h>
 
 class RotaryEncoder {
 public:
-    RotaryEncoder(uint8_t clkPin, uint8_t dtPin)
-        : _encoder(clkPin, dtPin, -1, -1, 4) {} // -1 = нет пина кнопки/VCC, 4 = фронтов на щелчок
+    RotaryEncoder(uint8_t pinA, uint8_t pinB)
+        : _pinA(pinA), _pinB(pinB) {}
 
     void begin() {
-        _encoder.begin();
-        _encoder.setBoundaries(-1000000, 1000000, false); // большой диапазон, без авто-сброса
-        _lastValue = _encoder.readEncoder();
+        _knob = new ESP_Knob(_pinA, _pinB);
+        _knob->begin();
+        _lastValue = _knob->getCountValue();
     }
 
     // Возвращает изменение счётчика с момента прошлого вызова.
     int readDelta() {
-        const long current = _encoder.readEncoder();
-        const int  delta   = static_cast<int>(current - _lastValue);
+        const int current = _knob->getCountValue();
+        const int delta   = current - _lastValue;
         _lastValue = current;
         return delta;
     }
 
 private:
-    AiEsp32RotaryEncoder _encoder;
-    long                 _lastValue = 0;
+    uint8_t   _pinA, _pinB;
+    ESP_Knob* _knob = nullptr;
+    int       _lastValue = 0;
 };
