@@ -73,6 +73,11 @@ pio device monitor
 The configured environment is `esp32-c3-devkitm-1`. The serial monitor baud rate
 is 115200.
 
+## Diagrams
+
+See [DIAGRAMS.md](DIAGRAMS.md) for the wiring diagram, UML class diagram, and
+application workflow.
+
 ## Project layout
 
 - `src/main.cpp` — GPIO assignments and component setup
