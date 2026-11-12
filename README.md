@@ -80,3 +80,7 @@ is 115200.
 - `src/OledDisplay.cpp` — OLED rendering
 - `src/SettingsStorage.h` — settings persistence using ESP32 Preferences
 - `platformio.ini` — board, framework, dependencies, and build configuration
+
+## License
+
+This project is released under the [MIT License](LICENSE).
