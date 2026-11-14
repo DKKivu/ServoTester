@@ -31,8 +31,8 @@ private:
     void handleSettingsClick();
 
     // --- Синхронизация углов и импульсов ---
-    void recalculateFromMaxAngle();
-    void recalculateFromMaxPulse();
+    void recalculateFromMaxAngle(int oldMaxAngle, int newMaxAngle);
+    void recalculateFromMaxPulse(int oldMaxPulse, int newMaxPulse);
 
     // --- ESC output ---
     void  rebuildEscOutput();
