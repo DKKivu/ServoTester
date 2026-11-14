@@ -61,6 +61,8 @@ classDiagram
         -handleMenuEncoder(delta)
         -handleMainMenuClick()
         -handleSettingsClick()
+        -recalculateFromMaxAngle()
+        -recalculateFromMaxPulse()
         -updateSweep(now)
         -render()
         -enterMenu()
@@ -75,6 +77,7 @@ classDiagram
         +maxPulse: int
         +step: int
         +sweepSpeed: int
+        +minAngle: int
         +maxAngle: int
         +clampAll()
     }
@@ -164,6 +167,7 @@ classDiagram
         MaxPulse
         Step
         SweepSpeed
+        MinAngle
         MaxAngle
         Save
         Back
@@ -201,19 +205,19 @@ flowchart TD
     LOOP --> READ["Read encoder count delta"]
     READ --> HAS_DELTA{"Delta != 0?"}
     HAS_DELTA -- Yes --> MENU_OFF{"Menu state is Off?"}
-    MENU_OFF -- Yes --> RUN_EDIT["Edit the active mode's value"]
-    MENU_OFF -- No --> MENU_EDIT["Move menu selection or edit setting"]
-    RUN_EDIT --> POLL
+    MENU_OFF -- Yes --> RUN_EDIT["Apply active mode adjustment"]
+    MENU_OFF -- No --> MENU_EDIT["Move selection or edit setting"]
+    RUN_EDIT --> POLL["Poll active-low button"]
     MENU_EDIT --> POLL
-    HAS_DELTA -- No --> POLL["Poll active-low button"]
+    HAS_DELTA -- No --> POLL
 
     POLL --> BUTTON_EVENT{"Click or long press?"}
     BUTTON_EVENT -- Yes --> HANDLE["Handle event for current mode/menu"]
     BUTTON_EVENT -- No --> SWEEP_CHECK
     HANDLE --> SWEEP_CHECK{"Mode is Sweep and menu is Off?"}
 
-    SWEEP_CHECK -- Yes --> ELAPSED{"Configured interval elapsed?"}
-    ELAPSED -- Yes --> SWEEP["Advance pulse by step;<br/>reverse at min/max"]
+    SWEEP_CHECK -- Yes --> ELAPSED{"Sweep interval elapsed?"}
+    ELAPSED -- Yes --> SWEEP["Advance pulse by step;<br/>reverse at pulse limits"]
     ELAPSED -- No --> RENDER
     SWEEP --> RENDER["Render running view or active menu"]
     SWEEP_CHECK -- No --> RENDER
@@ -225,12 +229,22 @@ flowchart TD
 ### Input and persistence details
 
 - In Manual mode, encoder rotation changes pulse width by `step`; in Sweep
-  mode it changes the interval; in Step mode it changes `step`; Center ignores
-  encoder rotation.
+  mode it changes the interval by 1 ms; in Step mode it changes `step` by 1
+  µs; Center ignores encoder rotation.
 - A short press cycles mode except in Step mode, where it advances the pulse
-  by one step. A long press opens the main menu.
-- Settings are written only by selecting **Save**. **Back** and long-press
-  return to the main menu without writing NVS; edits remain active until reset
-  and can still be saved later.
-- The angle display maps the configured pulse range to 0° through `maxAngle`;
-  it does not read the servo's physical position.
+  by `step`. Selecting Center commands the pulse-range midpoint. A long press
+  opens the main menu from the running screen.
+- The main-menu selection wraps. In Settings, a click on a numeric item
+  advances to the next item; **Save** persists to NVS, while **Back** and
+  long-press return to the main menu without saving.
+- Settings defaults are `minPulse=500`, `maxPulse=2500`, `step=10`,
+  `sweepSpeed=20`, `minAngle=0`, and `maxAngle=180`.
+- Startup/storage clamps are `minPulse=0–1500`, `maxPulse=1500–3500`,
+  `step=1–50`, `sweepSpeed=5–100`, `minAngle=0–180`, and `maxAngle=90–360`.
+  The interactive pulse-edit ranges are narrower: `minPulse=500–1500` and
+  `maxPulse=1500–2500`; all menu adjustments use the increments described in
+  [USER_MANUAL.md](USER_MANUAL.md).
+- The angle display uses Arduino `map()` to map `minPulse..maxPulse` to
+  `0..maxAngle`; `minAngle` is not used by that displayed-angle calculation.
+  The pulse/angle settings handlers also call recalculation methods when those
+  values are edited. The display is command-derived, not position feedback.
