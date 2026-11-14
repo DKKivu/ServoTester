@@ -1,16 +1,21 @@
 #include "ServoTesterApp.h"
 #include <Arduino.h>
 
+#include "PwmEscOutput.h"
+#include "OneShotEscOutput.h"
+#include "MultishotEscOutput.h"
+#include "DShotEscOutput.h"
+
 ServoTesterApp::ServoTesterApp(SettingsStorage& storage,
                                Display&         display,
                                RotaryEncoder&   encoder,
                                Button&          button,
-                               ServoOutput&     servo)
+                               uint8_t          escPin)
     : _storage(storage)
     , _display(display)
     , _encoder(encoder)
     , _button(button)
-    , _servo(servo) {}
+    , _escPin(escPin) {}
 
 void ServoTesterApp::begin() {
     _storage.load(_settings);
@@ -18,8 +23,8 @@ void ServoTesterApp::begin() {
 
     _encoder.begin();
     _button.begin();
-    _servo.begin(_settings.minPulse, _settings.maxPulse);
-    _servo.setPulse(1500);
+
+    rebuildEscOutput(); // создаём нужный протокол
 
     _display.begin();
     _display.showBoot();
@@ -51,8 +56,8 @@ void ServoTesterApp::handleEncoder(int delta) {
 void ServoTesterApp::handleRunningEncoder(int delta) {
     switch (_mode) {
         case Mode::Manual:
-            _servo.setPulseClamped(_servo.getPulse() + delta * _settings.step,
-                                   _settings.minPulse, _settings.maxPulse);
+            _esc->setRaw(constrain(_esc->getRaw() + delta * _settings.step,
+                                   _settings.minPulse, _settings.maxPulse));
             break;
         case Mode::Sweep:
             _settings.sweepSpeed = constrain(_settings.sweepSpeed + delta, 5, 100);
@@ -68,18 +73,20 @@ void ServoTesterApp::handleRunningEncoder(int delta) {
 
 void ServoTesterApp::handleMenuEncoder(int delta) {
     if (_menuState == MenuState::Main) {
-            _menuIndex = ((_menuIndex + delta) % MainMenuCount + MainMenuCount)
-                        % MainMenuCount;
-            return;
-        }
+        _menuIndex = ((_menuIndex + delta) % MainMenuCount + MainMenuCount)
+                     % MainMenuCount;
+        return;
+    }
+
+    // Settings
     switch (static_cast<SettingsItem>(_menuIndex)) {
         case SettingsItem::MinPulse:
             _settings.minPulse = constrain(_settings.minPulse + delta * 10, 500, 1500);
-            recalculateFromMaxPulse(); // синхронизируем угол
+            recalculateFromMaxPulse();
             break;
         case SettingsItem::MaxPulse:
             _settings.maxPulse = constrain(_settings.maxPulse + delta * 10, 1500, 2500);
-            recalculateFromMaxPulse(); // синхронизируем угол
+            recalculateFromMaxPulse();
             break;
         case SettingsItem::Step:
             _settings.step = constrain(_settings.step + delta, 1, 50);
@@ -89,34 +96,22 @@ void ServoTesterApp::handleMenuEncoder(int delta) {
             break;
         case SettingsItem::MinAngle:
             _settings.minAngle = constrain(_settings.minAngle + delta, 0, 180);
-            recalculateFromMaxAngle(); // синхронизируем импульс
+            recalculateFromMaxAngle();
             break;
         case SettingsItem::MaxAngle:
             _settings.maxAngle = constrain(_settings.maxAngle + delta, 90, 360);
-            recalculateFromMaxAngle(); // синхронизируем импульс
+            recalculateFromMaxAngle();
             break;
+        case SettingsItem::Protocol: {
+            int p = static_cast<int>(_settings.protocol) + delta;
+            if (p < 0) p = static_cast<int>(EscProtocol::_Count) - 1;
+            if (p >= static_cast<int>(EscProtocol::_Count)) p = 0;
+            _settings.protocol = static_cast<EscProtocol>(p);
+            rebuildEscOutput(); // пересоздаём выход при смене протокола
+            break;
+        }
         default: break;
     }
-}
-// Вспомогательный метод для пересчёта
-void ServoTesterApp::recalculateFromMaxAngle() {
-    // Сохраняем текущее разрешение (мкс на градус)
-    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
-                     (_settings.maxAngle - _settings.minAngle);
-    // Пересчитываем maxPulse, сохраняя minPulse и разрешение
-    _settings.maxPulse = _settings.minPulse +
-                         static_cast<int>(usPerDeg * (_settings.maxAngle - _settings.minAngle));
-    _settings.clampAll();
-}
-
-void ServoTesterApp::recalculateFromMaxPulse() {
-    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
-                     (_settings.maxAngle - _settings.minAngle);
-    if (usPerDeg <= 0.0f) return; // защита от деления на ноль
-    // Пересчитываем maxAngle, сохраняя minAngle и разрешение
-    _settings.maxAngle = _settings.minAngle +
-                         static_cast<int>((_settings.maxPulse - _settings.minPulse) / usPerDeg);
-    _settings.clampAll();
 }
 
 void ServoTesterApp::handleButton(ButtonEvent ev) {
@@ -126,8 +121,8 @@ void ServoTesterApp::handleButton(ButtonEvent ev) {
                 enterMenu();
             } else if (ev == ButtonEvent::Click) {
                 if (_mode == Mode::Step) {
-                    _servo.setPulseClamped(_servo.getPulse() + _settings.step,
-                                           _settings.minPulse, _settings.maxPulse);
+                    _esc->setRaw(constrain(_esc->getRaw() + _settings.step,
+                                           _settings.minPulse, _settings.maxPulse));
                 } else {
                     cycleMode();
                 }
@@ -135,12 +130,12 @@ void ServoTesterApp::handleButton(ButtonEvent ev) {
             break;
 
         case MenuState::Main:
-            if (ev == ButtonEvent::Click)      handleMainMenuClick();
+            if (ev == ButtonEvent::Click)          handleMainMenuClick();
             else if (ev == ButtonEvent::LongPress) exitMenu();
             break;
 
         case MenuState::Settings:
-            if (ev == ButtonEvent::Click)      handleSettingsClick();
+            if (ev == ButtonEvent::Click)          handleSettingsClick();
             else if (ev == ButtonEvent::LongPress) {
                 _menuState = MenuState::Main;
                 _menuIndex = 0;
@@ -181,6 +176,66 @@ void ServoTesterApp::handleSettingsClick() {
     }
 }
 
+// -------------------- синхронизация --------------------
+
+void ServoTesterApp::recalculateFromMaxAngle() {
+    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
+                     (_settings.maxAngle - _settings.minAngle);
+    _settings.maxPulse = _settings.minPulse +
+                         static_cast<int>(usPerDeg * (_settings.maxAngle - _settings.minAngle));
+    _settings.clampAll();
+}
+
+void ServoTesterApp::recalculateFromMaxPulse() {
+    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
+                     (_settings.maxAngle - _settings.minAngle);
+    if (usPerDeg <= 0.0f) return;
+    _settings.maxAngle = _settings.minAngle +
+                         static_cast<int>((_settings.maxPulse - _settings.minPulse) / usPerDeg);
+    _settings.clampAll();
+}
+
+// -------------------- ESC output --------------------
+
+void ServoTesterApp::rebuildEscOutput() {
+    if (_esc) {
+        delete _esc;
+        _esc = nullptr;
+    }
+
+    switch (_settings.protocol) {
+        case EscProtocol::PWM:
+            _esc = new PwmEscOutput(_escPin);
+            break;
+        case EscProtocol::OneShot125:
+            _esc = new OneShotEscOutput(_escPin, OneShotType::ONESHOT125);
+            break;
+        case EscProtocol::OneShot42:
+            _esc = new OneShotEscOutput(_escPin, OneShotType::ONESHOT42);
+            break;
+        case EscProtocol::Multishot:
+            _esc = new MultishotEscOutput(_escPin);
+            break;
+        case EscProtocol::DShot150:
+            _esc = new DShotEscOutput(_escPin, DShotSpeed::DSHOT150);
+            break;
+        case EscProtocol::DShot300:
+            _esc = new DShotEscOutput(_escPin, DShotSpeed::DSHOT300);
+            break;
+        case EscProtocol::DShot600:
+            _esc = new DShotEscOutput(_escPin, DShotSpeed::DSHOT600);
+            break;
+        case EscProtocol::DShot1200:
+            _esc = new DShotEscOutput(_escPin, DShotSpeed::DSHOT1200);
+            break;
+        default:
+            _esc = new PwmEscOutput(_escPin);
+            break;
+    }
+
+    _esc->begin(_settings.minPulse, _settings.maxPulse);
+}
+
 // -------------------- логика --------------------
 
 void ServoTesterApp::cycleMode() {
@@ -191,7 +246,7 @@ void ServoTesterApp::setMode(Mode m) {
     _mode = m;
     if (_mode == Mode::Center) {
         const int center = (_settings.minPulse + _settings.maxPulse) / 2;
-        _servo.setPulse(center);
+        _esc->setRaw(center);
     }
     if (_mode == Mode::Sweep) {
         _sweepUp = true;
@@ -212,7 +267,7 @@ void ServoTesterApp::updateSweep(unsigned long now) {
     if (now - _lastSweep < static_cast<unsigned long>(_settings.sweepSpeed)) return;
     _lastSweep = now;
 
-    int p = _servo.getPulse();
+    int p = _esc->getRaw();
     if (_sweepUp) {
         p += _settings.step;
         if (p >= _settings.maxPulse) { p = _settings.maxPulse; _sweepUp = false; }
@@ -220,12 +275,13 @@ void ServoTesterApp::updateSweep(unsigned long now) {
         p -= _settings.step;
         if (p <= _settings.minPulse) { p = _settings.minPulse; _sweepUp = true;  }
     }
-    _servo.setPulse(p);
+    _esc->setRaw(p);
 }
 
 int ServoTesterApp::angleFromPulse() const {
-    return static_cast<int>(map(_servo.getPulse(),
-                                _settings.minPulse, _settings.maxPulse, 0, _settings.maxAngle)); // <-- maxAngle
+    return static_cast<int>(map(_esc->getRaw(),
+                                _settings.minPulse, _settings.maxPulse,
+                                0, _settings.maxAngle));
 }
 
 // -------------------- отрисовка --------------------
@@ -233,7 +289,7 @@ int ServoTesterApp::angleFromPulse() const {
 void ServoTesterApp::render() {
     switch (_menuState) {
         case MenuState::Off:
-            _display.showRunning(_mode, _servo.getPulse(), angleFromPulse());
+            _display.showRunning(_mode, _esc->getRaw(), angleFromPulse());
             break;
         case MenuState::Main:
             _display.showMainMenu(_menuIndex);

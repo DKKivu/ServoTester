@@ -5,7 +5,8 @@
 #include "Display.h"
 #include "Button.h"
 #include "RotaryEncoder.h"
-#include "ServoOutput.h"
+#include "IEscOutput.h"
+#include "EscProtocol.h"
 
 class ServoTesterApp {
 public:
@@ -13,7 +14,7 @@ public:
                    Display&         display,
                    RotaryEncoder&   encoder,
                    Button&          button,
-                   ServoOutput&     servo);
+                   uint8_t          escPin);
 
     void begin();
     void loop();
@@ -33,6 +34,9 @@ private:
     void recalculateFromMaxAngle();
     void recalculateFromMaxPulse();
 
+    // --- Управление ESC ---
+    void rebuildEscOutput();
+
     // --- Логика ---
     void updateSweep(unsigned long now);
     void render();
@@ -43,12 +47,14 @@ private:
     void setMode(Mode m);
     int  angleFromPulse() const;
 
-    // --- Зависимости (DIP) ---
+    // --- Зависимости ---
     SettingsStorage& _storage;
     Display&         _display;
     RotaryEncoder&   _encoder;
     Button&          _button;
-    ServoOutput&     _servo;
+    uint8_t          _escPin;
+
+    IEscOutput*      _esc = nullptr; // <-- вместо ServoOutput&
 
     // --- Состояние ---
     Settings      _settings;

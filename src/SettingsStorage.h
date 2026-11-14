@@ -19,6 +19,8 @@ public:
         s.sweepSpeed = _prefs.getInt("sweepSpeed", s.sweepSpeed);
         s.minAngle   = _prefs.getInt("minAngle",   s.minAngle);
         s.maxAngle   = _prefs.getInt("maxAngle",   s.maxAngle);
+        s.protocol   = static_cast<EscProtocol>(
+            _prefs.getInt("protocol", static_cast<int>(s.protocol)));
         _prefs.end();
     }
 
@@ -30,9 +32,9 @@ public:
         _prefs.putInt("sweepSpeed", s.sweepSpeed);
         _prefs.putInt("minAngle",   s.minAngle);
         _prefs.putInt("maxAngle",   s.maxAngle);
+        _prefs.putInt("protocol",   static_cast<int>(s.protocol));
         _prefs.end();
     }
-
 
 private:
     Preferences _prefs;
