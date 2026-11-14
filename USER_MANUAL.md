@@ -52,8 +52,8 @@ actual update timing may be delayed by other loop work.
 
 ## Output protocols
 
-Select the protocol in **Settings → Protocol**. The selection takes effect
-immediately and is saved only when you choose **Save**.
+Select the protocol in **Settings → Proto**. The output adapter is rebuilt
+immediately; select **Save** to persist the selection.
 
 | Display name | Signal implementation | Adapter output range |
 | --- | --- | --- |
@@ -115,12 +115,12 @@ from 500 through 700 ms produce no event.
 ### Settings menu
 
 The list is **MinPulse**, **MaxPulse**, **Step**, **SweepSpd**, **MinAngle**,
-**MaxAngle**, **Protocol**, **Save**, and **Back**. Three rows are visible at
-a time. The protocol is shown with a compact label: PWM, O125, O42, Multi,
-D150, D300, D600, or D1200.
+**MaxAngle**, **Proto**, **Save**, and **Back**. Three rows are visible at a
+time. The selected protocol is shown with a compact value: PWM, O125, O42,
+Multi, D150, D300, D600, or D1200.
 
 - Turn the encoder on a numeric setting to edit it.
-- Turn the encoder on Protocol to cycle protocols; the output is rebuilt
+- Turn the encoder on **Proto** to cycle protocols; the output is rebuilt
   immediately.
 - Short-press to advance to the next item.
 - **Save** writes all settings to NVS and returns to the main menu.

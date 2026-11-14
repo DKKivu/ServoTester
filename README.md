@@ -49,12 +49,14 @@ ServoTester provides four distinct control modes, selected via the rotary encode
 
 | Mode | Encoder Behavior | Button Behavior |
 | --- | --- | --- |
-| **Manual** | Adjust pulse width by step size (default 10 µs) | Cycle to next mode |
+| **Manual** | Adjust output by configured step (default 10) | Cycle to next mode |
 | **Sweep** | Adjust sweep interval (5–100 ms) | Cycle to next mode |
 | **Center** | No effect | Cycle to next mode |
-| **Step** | Adjust step size (1–50 µs) | Advance pulse by one step |
+| **Step** | Adjust step size (1–50) | Advance output by one step |
 
-Mode cycle: **Manual → Sweep → Center → Step → Manual**
+Mode cycle: **Manual → Sweep → Center → Step → Manual**. Numeric units
+depend on the selected protocol; only PWM uses the configured values as pulse
+widths in microseconds.
 
 For detailed mode descriptions and usage, see [USER_MANUAL.md](USER_MANUAL.md).
 
@@ -65,9 +67,9 @@ non-volatile storage (NVS):
 
 | Setting | Default | Range | Unit | Description |
 | --- | ---: | ---: | --- | --- |
-| Minimum pulse | 1000 | 500–1500 | µs | Lower output limit |
-| Maximum pulse | 2000 | 1500–2500 | µs | Upper output limit |
-| Step size | 10 | 1–50 | µs | Pulse increment per encoder detent |
+| Minimum pulse | 1000 | 500–1500 | PWM: µs | Lower output limit |
+| Maximum pulse | 2000 | 1500–2500 | PWM: µs | Upper output limit |
+| Step size | 10 | 1–50 | PWM: µs | Output increment per encoder detent |
 | Sweep interval | 20 | 5–100 | ms | Time between sweep steps |
 | Display min angle | 0 | 0–180 | ° | Lower angle setting |
 | Display max angle | 120 | 90–360 | ° | Upper angle scale value |
@@ -79,6 +81,10 @@ protocol's native range. In particular, OneShot and Multishot adapters clamp
 to much smaller native pulse values, while DShot uses command values. Treat
 non-PWM selections as experimental; remove propellers and loads, and verify
 the signal with appropriate equipment before connecting a motor.
+
+In the settings screen, Protocol is abbreviated as **Proto** and displays the
+selected protocol using a compact name. The setting is applied immediately
+and persists when you select **Save**.
 
 Changes are live immediately but are written to NVS only when you select
 **Save** in the settings menu. **Back** and long-press leave without saving.

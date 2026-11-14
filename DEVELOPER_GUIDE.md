@@ -69,6 +69,10 @@ edits immediately replace and initialize the output adapter. **Save** writes
 all values to NVS and returns to the main menu; **Back** and long press leave
 without saving.
 
+The OLED settings row labels Protocol as `Proto` and shows a compact protocol
+name. Keep the label array and the `SettingsItem` ordering aligned when
+adding or reordering settings.
+
 ## Settings and persistence
 
 The `Settings` defaults and startup/storage clamps are:

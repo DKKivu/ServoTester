@@ -197,6 +197,8 @@ flowchart TD
 - A long press opens the main menu. In Settings, a click advances to the next
   item; **Save** persists settings, while **Back** and long press leave
   without saving.
+- Protocol is shown as `Proto` with a compact value in the OLED Settings menu.
+  Protocol changes take effect immediately; Save persists them.
 - Settings defaults are `minPulse=1000`, `maxPulse=2000`, `step=10`,
   `sweepSpeed=20`, `minAngle=0`, `maxAngle=120`, and `protocol=PWM`.
 - NVS namespace is `servo`. Protocol values are stored as enum integers;

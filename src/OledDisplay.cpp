@@ -2,7 +2,7 @@
 
 namespace {
     const char* const MAIN_LABELS[]     = {"Manual", "Sweep", "Center", "Step", "Settings"};
-    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Protocol", "Save", "Back"};
+    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Proto", "Save", "Back"};
 
     const char* protocolShortName(EscProtocol protocol) {
         switch (protocol) {
