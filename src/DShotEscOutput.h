@@ -11,8 +11,14 @@ public:
 
     void begin(int /*minPulseUs*/, int /*maxPulseUs*/) override {
         _dshot.begin(_pin, mode());
-        DSHOT::arm();                 // арming обязателен для ESC
-        _raw = 48;                    // минимальный throttle
+
+        // Фаза 3: армируем ESC только один раз за всё время работы.
+        if (!_armed) {
+            DSHOT::arm();
+            _armed = true;
+        }
+
+        _raw = 48; // минимальный throttle (disarmed / 0%)
         _dshot.set(static_cast<uint16_t>(_raw));
     }
 
@@ -47,6 +53,9 @@ public:
         return "DShot";
     }
 
+    // Явный запрос на переармировку (например, после включения питания ESC).
+    static void requestRearm() { _armed = false; }
+
 private:
     DSHOT::dshot_mode_t mode() const {
         switch (_speed) {
@@ -57,6 +66,8 @@ private:
         }
         return DSHOT::DSHOT300;
     }
+
+    static inline bool _armed = false; // C++17 inline static member
 
     uint8_t       _pin;
     DShotSpeed    _speed;
