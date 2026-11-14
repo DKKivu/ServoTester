@@ -2,7 +2,7 @@
 
 namespace {
     const char* const MAIN_LABELS[]     = {"Manual", "Sweep", "Center", "Step", "Settings"};
-    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MaxAngle", "Save", "Back"};
+    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Save", "Back"};
 }
 
 OledDisplay::OledDisplay(uint8_t sdaPin, uint8_t sclPin)
@@ -82,6 +82,7 @@ void OledDisplay::showSettingsMenu(const Settings& s, int selected) {
             case SettingsItem::Step:       _u8g2.print(":"); _u8g2.print(s.step);       break;
             case SettingsItem::SweepSpeed: _u8g2.print(":"); _u8g2.print(s.sweepSpeed); break;
             case SettingsItem::MaxAngle: _u8g2.print(":"); _u8g2.print(s.maxAngle); break;
+            case SettingsItem::MinAngle: _u8g2.print(":"); _u8g2.print(s.minAngle); break;
             default: break;
         }
     }

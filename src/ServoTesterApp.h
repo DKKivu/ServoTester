@@ -21,7 +21,7 @@ public:
 private:
     enum class MenuState { Off, Main, Settings };
 
-    // Обработка ввода
+    // --- Обработка ввода ---
     void handleEncoder(int delta);
     void handleButton(ButtonEvent ev);
     void handleRunningEncoder(int delta);
@@ -29,7 +29,11 @@ private:
     void handleMainMenuClick();
     void handleSettingsClick();
 
-    // Бизнес-логика
+    // --- Синхронизация углов и импульсов ---
+    void recalculateFromMaxAngle();
+    void recalculateFromMaxPulse();
+
+    // --- Логика ---
     void updateSweep(unsigned long now);
     void render();
 
@@ -39,14 +43,14 @@ private:
     void setMode(Mode m);
     int  angleFromPulse() const;
 
-    // Зависимости (DIP)
+    // --- Зависимости (DIP) ---
     SettingsStorage& _storage;
     Display&         _display;
     RotaryEncoder&   _encoder;
     Button&          _button;
     ServoOutput&     _servo;
 
-    // Состояние
+    // --- Состояние ---
     Settings      _settings;
     Mode          _mode       = Mode::Manual;
     MenuState     _menuState  = MenuState::Off;

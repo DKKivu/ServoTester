@@ -17,9 +17,10 @@ public:
         s.maxPulse   = _prefs.getInt("maxPulse",   s.maxPulse);
         s.step       = _prefs.getInt("step",       s.step);
         s.sweepSpeed = _prefs.getInt("sweepSpeed", s.sweepSpeed);
-        s.maxAngle   = _prefs.getInt("maxAngle",   s.maxAngle); // <-- Новая строка
+        s.minAngle   = _prefs.getInt("minAngle",   s.minAngle);
+        s.maxAngle   = _prefs.getInt("maxAngle",   s.maxAngle);
         _prefs.end();
-}
+    }
 
     void save(const Settings& s) override {
         _prefs.begin("servo", false);
@@ -27,9 +28,10 @@ public:
         _prefs.putInt("maxPulse",   s.maxPulse);
         _prefs.putInt("step",       s.step);
         _prefs.putInt("sweepSpeed", s.sweepSpeed);
-        _prefs.putInt("maxAngle",   s.maxAngle); // <-- Новая строка
+        _prefs.putInt("minAngle",   s.minAngle);
+        _prefs.putInt("maxAngle",   s.maxAngle);
         _prefs.end();
-}
+    }
 
 
 private:

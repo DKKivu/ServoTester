@@ -68,18 +68,18 @@ void ServoTesterApp::handleRunningEncoder(int delta) {
 
 void ServoTesterApp::handleMenuEncoder(int delta) {
     if (_menuState == MenuState::Main) {
-        _menuIndex = ((_menuIndex + delta) % MainMenuCount + MainMenuCount)
-                     % MainMenuCount;
-        return;
-    }
-
-    // Settings
+            _menuIndex = ((_menuIndex + delta) % MainMenuCount + MainMenuCount)
+                        % MainMenuCount;
+            return;
+        }
     switch (static_cast<SettingsItem>(_menuIndex)) {
         case SettingsItem::MinPulse:
             _settings.minPulse = constrain(_settings.minPulse + delta * 10, 500, 1500);
+            recalculateFromMaxPulse(); // синхронизируем угол
             break;
         case SettingsItem::MaxPulse:
             _settings.maxPulse = constrain(_settings.maxPulse + delta * 10, 1500, 2500);
+            recalculateFromMaxPulse(); // синхронизируем угол
             break;
         case SettingsItem::Step:
             _settings.step = constrain(_settings.step + delta, 1, 50);
@@ -87,11 +87,36 @@ void ServoTesterApp::handleMenuEncoder(int delta) {
         case SettingsItem::SweepSpeed:
             _settings.sweepSpeed = constrain(_settings.sweepSpeed + delta, 5, 100);
             break;
+        case SettingsItem::MinAngle:
+            _settings.minAngle = constrain(_settings.minAngle + delta, 0, 180);
+            recalculateFromMaxAngle(); // синхронизируем импульс
+            break;
         case SettingsItem::MaxAngle:
             _settings.maxAngle = constrain(_settings.maxAngle + delta, 90, 360);
+            recalculateFromMaxAngle(); // синхронизируем импульс
             break;
         default: break;
     }
+}
+// Вспомогательный метод для пересчёта
+void ServoTesterApp::recalculateFromMaxAngle() {
+    // Сохраняем текущее разрешение (мкс на градус)
+    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
+                     (_settings.maxAngle - _settings.minAngle);
+    // Пересчитываем maxPulse, сохраняя minPulse и разрешение
+    _settings.maxPulse = _settings.minPulse +
+                         static_cast<int>(usPerDeg * (_settings.maxAngle - _settings.minAngle));
+    _settings.clampAll();
+}
+
+void ServoTesterApp::recalculateFromMaxPulse() {
+    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
+                     (_settings.maxAngle - _settings.minAngle);
+    if (usPerDeg <= 0.0f) return; // защита от деления на ноль
+    // Пересчитываем maxAngle, сохраняя minAngle и разрешение
+    _settings.maxAngle = _settings.minAngle +
+                         static_cast<int>((_settings.maxPulse - _settings.minPulse) / usPerDeg);
+    _settings.clampAll();
 }
 
 void ServoTesterApp::handleButton(ButtonEvent ev) {
