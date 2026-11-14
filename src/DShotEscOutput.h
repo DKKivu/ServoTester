@@ -12,22 +12,30 @@ public:
     void begin(int /*minPulseUs*/, int /*maxPulseUs*/) override {
         _dshot.begin(_pin, mode());
         DSHOT::arm();                 // арming обязателен для ESC
-        _raw = 48;                    // минимальный throttle (disarmed)
-        _dshot.set(_raw);
+        _raw = 48;                    // минимальный throttle
+        _dshot.set(static_cast<uint16_t>(_raw));
     }
 
     void setRaw(int value) override {
         _raw = constrain(value, 48, 2047);
-        _dshot.set(_raw);
-    }
-
-    void setThrottle(float percent) override {
-        percent = constrain(percent, 0.0f, 100.0f);
-        int val = 48 + static_cast<int>((2047 - 48) * percent / 100.0f);
-        setRaw(val);
+        _dshot.set(static_cast<uint16_t>(_raw));
     }
 
     int getRaw() const override { return _raw; }
+
+    void setNormalized(float v01) override {
+        v01 = constrain(v01, 0.0f, 1.0f);
+        const int value = 48 + static_cast<int>((2047 - 48) * v01 + 0.5f);
+        setRaw(value);
+    }
+
+    float getNormalized() const override {
+        return static_cast<float>(_raw - 48) / static_cast<float>(2047 - 48);
+    }
+
+    void setThrottle(float percent) override {
+        setNormalized(constrain(percent, 0.0f, 100.0f) / 100.0f);
+    }
 
     const char* name() const override {
         switch (_speed) {

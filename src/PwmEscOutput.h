@@ -20,13 +20,23 @@ public:
         _servo.writeMicroseconds(_raw);
     }
 
-    void setThrottle(float percent) override {
-        percent = constrain(percent, 0.0f, 100.0f);
-        int us = _min + static_cast<int>((_max - _min) * percent / 100.0f);
+    int getRaw() const override { return _raw; }
+
+    void setNormalized(float v01) override {
+        v01 = constrain(v01, 0.0f, 1.0f);
+        const int us = _min + static_cast<int>((_max - _min) * v01 + 0.5f);
         setRaw(us);
     }
 
-    int getRaw() const override { return _raw; }
+    float getNormalized() const override {
+        if (_max <= _min) return 0.0f;
+        return static_cast<float>(_raw - _min) / static_cast<float>(_max - _min);
+    }
+
+    void setThrottle(float percent) override {
+        setNormalized(constrain(percent, 0.0f, 100.0f) / 100.0f);
+    }
+
     const char* name() const override { return "PWM"; }
 
 private:

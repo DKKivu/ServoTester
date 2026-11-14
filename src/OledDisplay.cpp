@@ -1,21 +1,35 @@
 #include "OledDisplay.h"
+#include <cstring>
 
 namespace {
-    const char* const MAIN_LABELS[]     = {"Manual", "Sweep", "Center", "Step", "Settings"};
-    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Proto", "Save", "Back"};
+    const char* const MAIN_LABELS[] = {
+        "Manual", "Sweep", "Center", "Step", "Settings"
+    };
+    const char* const SETTINGS_LABELS[] = {
+        "MinPulse", "MaxPulse", "Step", "StepPct", "SweepSpd",
+        "MinAngle", "MaxAngle", "Protocol", "Save", "Back"
+    };
 
-    const char* protocolShortName(EscProtocol protocol) {
-        switch (protocol) {
-            case EscProtocol::PWM:        return "PWM";
-            case EscProtocol::OneShot125: return "O125";
-            case EscProtocol::OneShot42:  return "O42";
-            case EscProtocol::Multishot:  return "Multi";
-            case EscProtocol::DShot150:   return "D150";
-            case EscProtocol::DShot300:   return "D300";
-            case EscProtocol::DShot600:   return "D600";
-            case EscProtocol::DShot1200:  return "D1200";
+    const char* modeName(Mode m) {
+        switch (m) {
+            case Mode::Manual: return "MANUAL";
+            case Mode::Sweep:  return "SWEEP";
+            case Mode::Center: return "CENTER";
+            case Mode::Step:   return "STEP";
             default: return "?";
         }
+    }
+
+    const char* abbreviateProtocol(const char* protocol) {
+        if (strcmp(protocol, "PWM") == 0)        return "PWM";
+        if (strcmp(protocol, "DShot150") == 0)   return "DS150";
+        if (strcmp(protocol, "DShot300") == 0)   return "DS300";
+        if (strcmp(protocol, "DShot600") == 0)   return "DS600";
+        if (strcmp(protocol, "DShot1200") == 0)  return "DS1200";
+        if (strcmp(protocol, "OneShot125") == 0) return "OS125";
+        if (strcmp(protocol, "OneShot42") == 0)  return "OS42";
+        if (strcmp(protocol, "Multishot") == 0)  return "MS";
+        return protocol;
     }
 }
 
@@ -36,23 +50,39 @@ void OledDisplay::showBoot() {
     _u8g2.sendBuffer();
 }
 
-void OledDisplay::showRunning(Mode mode, int pulseUs, int angleDeg) {
+void OledDisplay::showRunning(Mode mode,
+                              const char* protocol,
+                              int rawValue,
+                              float normalized,
+                              int angleDeg) {
     _u8g2.clearBuffer();
 
+    const bool isPwm = (strcmp(protocol, "PWM") == 0);
+    const int  pct   = static_cast<int>(normalized * 100.0f + 0.5f);
+
+    // Line 1: MODE PROTO
     _u8g2.setCursor(0, 8);
-    switch (mode) {
-        case Mode::Manual: _u8g2.print("MANUAL"); break;
-        case Mode::Sweep:  _u8g2.print("SWEEP");  break;
-        case Mode::Center: _u8g2.print("CENTER"); break;
-        case Mode::Step:   _u8g2.print("STEP");   break;
-        default: break;
+    _u8g2.print(modeName(mode));
+    _u8g2.print(" ");
+    _u8g2.print(abbreviateProtocol(protocol));
+
+    // Line 2: value
+    _u8g2.setCursor(0, 18);
+    if (isPwm) {
+        _u8g2.print("P:");
+        _u8g2.print(rawValue);
+        _u8g2.print("us");
+    } else {
+        _u8g2.print("T:");
+        _u8g2.print(pct);
+        _u8g2.print("%");
     }
 
-    _u8g2.setCursor(0, 18);
-    _u8g2.print("P:");  _u8g2.print(pulseUs);  _u8g2.print("us");
-
+    // Line 3: angle (PWM) — Фаза 4 дополнит логику
     _u8g2.setCursor(0, 28);
-    _u8g2.print("A:");  _u8g2.print(angleDeg); _u8g2.print((char)176);
+    _u8g2.print("A:");
+    _u8g2.print(angleDeg);
+    _u8g2.print((char)176);
 
     _u8g2.sendBuffer();
 }
@@ -66,7 +96,7 @@ void OledDisplay::showMainMenu(int selected) {
     if (start < 0) start = 0;
 
     for (int i = 0; i < 3; i++) {
-        int idx = start + i;
+        const int idx = start + i;
         if (idx >= MainMenuCount) break;
         _u8g2.setCursor(4, 10 + i * 10);
         _u8g2.print(idx == selected ? ">" : " ");
@@ -84,23 +114,29 @@ void OledDisplay::showSettingsMenu(const Settings& s, int selected) {
     if (start < 0) start = 0;
 
     for (int i = 0; i < 3; i++) {
-        int idx = start + i;
+        const int idx = start + i;
         if (idx >= SettingsMenuCount) break;
         _u8g2.setCursor(4, 10 + i * 10);
         _u8g2.print(idx == selected ? ">" : " ");
         _u8g2.print(SETTINGS_LABELS[idx]);
 
         switch (static_cast<SettingsItem>(idx)) {
-            case SettingsItem::MinPulse:   _u8g2.print(":"); _u8g2.print(s.minPulse);   break;
-            case SettingsItem::MaxPulse:   _u8g2.print(":"); _u8g2.print(s.maxPulse);   break;
-            case SettingsItem::Step:       _u8g2.print(":"); _u8g2.print(s.step);       break;
-            case SettingsItem::SweepSpeed: _u8g2.print(":"); _u8g2.print(s.sweepSpeed); break;
-            case SettingsItem::MaxAngle: _u8g2.print(":"); _u8g2.print(s.maxAngle); break;
-            case SettingsItem::MinAngle: _u8g2.print(":"); _u8g2.print(s.minAngle); break;
+            case SettingsItem::MinPulse:
+                _u8g2.print(":"); _u8g2.print(s.minPulse); break;
+            case SettingsItem::MaxPulse:
+                _u8g2.print(":"); _u8g2.print(s.maxPulse); break;
+            case SettingsItem::Step:
+                _u8g2.print(":"); _u8g2.print(s.step); break;
+            case SettingsItem::StepPercent:
+                _u8g2.print(":"); _u8g2.print(s.stepPercent); _u8g2.print("%"); break;
+            case SettingsItem::SweepSpeed:
+                _u8g2.print(":"); _u8g2.print(s.sweepSpeed); break;
+            case SettingsItem::MinAngle:
+                _u8g2.print(":"); _u8g2.print(s.minAngle); break;
+            case SettingsItem::MaxAngle:
+                _u8g2.print(":"); _u8g2.print(s.maxAngle); break;
             case SettingsItem::Protocol:
-                _u8g2.print(":");
-                _u8g2.print(protocolShortName(s.protocol));
-                break;
+                _u8g2.print(":"); _u8g2.print(protocolName(s.protocol)); break;
             default: break;
         }
     }

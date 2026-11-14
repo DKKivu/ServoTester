@@ -34,8 +34,9 @@ private:
     void recalculateFromMaxAngle();
     void recalculateFromMaxPulse();
 
-    // --- Управление ESC ---
-    void rebuildEscOutput();
+    // --- ESC output ---
+    void  rebuildEscOutput();
+    float stepNormalized() const;
 
     // --- Логика ---
     void updateSweep(unsigned long now);
@@ -45,7 +46,7 @@ private:
     void exitMenu();
     void cycleMode();
     void setMode(Mode m);
-    int  angleFromPulse() const;
+    int  angleFromThrottle() const;
 
     // --- Зависимости ---
     SettingsStorage& _storage;
@@ -54,7 +55,7 @@ private:
     Button&          _button;
     uint8_t          _escPin;
 
-    IEscOutput*      _esc = nullptr; // <-- вместо ServoOutput&
+    IEscOutput*      _esc = nullptr;
 
     // --- Состояние ---
     Settings      _settings;
@@ -63,4 +64,5 @@ private:
     int           _menuIndex  = 0;
     bool          _sweepUp    = true;
     unsigned long _lastSweep  = 0;
+    float         _throttle01 = 0.5f;   // нормализованное положение 0.0..1.0
 };
