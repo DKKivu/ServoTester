@@ -12,18 +12,20 @@
 Four operating modes control the selected output:
 - **Manual**: Adjust the output value with the encoder
 - **Sweep**: Repeatedly move between configured limits
-- **Center**: Move to the midpoint of the configured range
+- **Center**: Move to 50% of the normalized output range
 - **Step**: Increment the output by one configured step on each click
 
 The output protocol is configurable: PWM, OneShot125, OneShot42, Multishot,
 and DShot150/300/600/1200. PWM is the default.
 
 A rotary encoder and push button provide input; a 72×40 pixel OLED shows the
-current mode, output value, and a derived angle. Settings, including the
-selected protocol, are stored in ESP32 non-volatile storage (NVS) when saved.
+current mode and protocol, plus protocol-appropriate output details. Settings,
+including the selected protocol, are stored in ESP32 non-volatile storage
+(NVS) when saved.
 
-**Important:** The angle is derived from the output value and configured
-limits. It is not measured servo or motor position feedback.
+**Important:** The angle is a display scale from `minAngle` to `maxAngle`,
+based on normalized output. It is not measured servo or motor position
+feedback.
 
 ## Hardware Pins
 
@@ -49,42 +51,43 @@ ServoTester provides four distinct control modes, selected via the rotary encode
 
 | Mode | Encoder Behavior | Button Behavior |
 | --- | --- | --- |
-| **Manual** | Adjust output by configured step (default 10) | Cycle to next mode |
+| **Manual** | Adjust output by configured step | Cycle to next mode |
 | **Sweep** | Adjust sweep interval (5–100 ms) | Cycle to next mode |
 | **Center** | No effect | Cycle to next mode |
-| **Step** | Adjust step size (1–50) | Advance output by one step |
+| **Step** | Adjust PWM step or non-PWM percentage step | Advance output by one step |
 
-Mode cycle: **Manual → Sweep → Center → Step → Manual**. Numeric units
-depend on the selected protocol; only PWM uses the configured values as pulse
-widths in microseconds.
+Mode cycle: **Manual → Sweep → Center → Step → Manual**. PWM step is
+configured in microseconds; non-PWM step is configured as a percentage of the
+normalized output range.
 
 For detailed mode descriptions and usage, see [USER_MANUAL.md](USER_MANUAL.md).
 
 ## Configurable Settings
 
-The firmware provides seven user-adjustable settings, stored in ESP32
+The firmware provides eight user-adjustable settings, stored in ESP32
 non-volatile storage (NVS):
 
 | Setting | Default | Range | Unit | Description |
 | --- | ---: | ---: | --- | --- |
-| Minimum pulse | 1000 | 500–1500 | PWM: µs | Lower output limit |
-| Maximum pulse | 2000 | 1500–2500 | PWM: µs | Upper output limit |
-| Step size | 10 | 1–50 | PWM: µs | Output increment per encoder detent |
+| Minimum pulse | 1000 | 500–1500 | µs | PWM lower pulse limit |
+| Maximum pulse | 2000 | 1500–2500 | µs | PWM upper pulse limit |
+| PWM step size | 10 | 1–50 | µs | PWM output increment |
+| Non-PWM step | 5 | 1–20 | % | Normalized output increment |
 | Sweep interval | 20 | 5–100 | ms | Time between sweep steps |
 | Display min angle | 0 | 0–180 | ° | Lower angle setting |
 | Display max angle | 120 | 90–360 | ° | Upper angle scale value |
 | Output protocol | PWM | 8 choices | — | Signal-generation protocol |
 
-**Protocol note:** The shared Manual/Sweep controls still use the configured
-min/max values as raw numbers. Those controls are not yet normalized to each
-protocol's native range. In particular, OneShot and Multishot adapters clamp
-to much smaller native pulse values, while DShot uses command values. Treat
-non-PWM selections as experimental; remove propellers and loads, and verify
-the signal with appropriate equipment before connecting a motor.
+Manual, Sweep, Center, and Step operate on a normalized 0–1 output position;
+each adapter converts it to its protocol's native range. The PWM pulse limits
+apply only to PWM. OneShot125, OneShot42, and Multishot use their fixed native
+pulse ranges, while DShot maps to command values. Confirm the selected ESC
+supports the chosen protocol and test with propellers and mechanical loads
+removed.
 
-In the settings screen, Protocol is abbreviated as **Proto** and displays the
-selected protocol using a compact name. The setting is applied immediately
-and persists when you select **Save**.
+The settings screen displays the protocol name. Selecting a non-PWM protocol
+sets its normalized output to zero; PWM starts at its midpoint on boot.
+Protocol edits take effect immediately and persist when you select **Save**.
 
 Changes are live immediately but are written to NVS only when you select
 **Save** in the settings menu. **Back** and long-press leave without saving.
@@ -164,19 +167,21 @@ To customize GPIO pins, see `src/main.cpp` and modify the pin constants.
 
 ## Technical Notes
 
-### Output values and angle display
+### Normalized output and angle display
 
-The displayed angle maps the selected output's raw value between configured
-min/max settings to `0..maxAngle`. It does not use `minAngle` in the display
-calculation and is not feedback from the servo or ESC. The raw output is
-protocol-specific: PWM and OneShot/Multishot use pulse widths; DShot uses
-digital throttle command values.
+The app stores output as a normalized value from 0.0 to 1.0. Each adapter
+maps this value to its protocol-specific domain. The OLED shows PWM pulse
+width and angle for PWM; for other protocols it shows throttle percentage
+and raw output value.
 
-PWM uses a 50 Hz signal and the configured pulse limits. OneShot125 and
-OneShot42 use 125–250 µs and 42–84 µs respectively; Multishot uses 5–25 µs.
-DShot options select 150, 300, 600, or 1200 kbit/s and use command values
-48–2047 in their adapter. The application-level limits currently do not
-translate to these native ranges; see the safety note above.
+The angle maps normalized output to `minAngle..maxAngle`. It is a display
+scale, not position feedback. Changing `maxPulse` or `maxAngle` attempts to
+preserve the current pulse-to-angle ratio; a change is rejected if the paired
+value would exceed its allowed range.
+
+The output adapters map normalized output to these native ranges: PWM uses
+the configured pulse limits; OneShot125 uses 125–250 µs; OneShot42 uses
+42–84 µs; Multishot uses 5–25 µs; DShot uses commands 48–2047.
 
 ### Dependencies
 
