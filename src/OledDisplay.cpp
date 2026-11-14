@@ -66,7 +66,7 @@ void OledDisplay::showRunning(Mode mode,
     _u8g2.print(" ");
     _u8g2.print(abbreviateProtocol(protocol));
 
-    // Line 2: value
+    // Line 2: primary value
     _u8g2.setCursor(0, 18);
     if (isPwm) {
         _u8g2.print("P:");
@@ -78,11 +78,16 @@ void OledDisplay::showRunning(Mode mode,
         _u8g2.print("%");
     }
 
-    // Line 3: angle (PWM) — Фаза 4 дополнит логику
+    // Line 3: angle for PWM, raw value for non-PWM (Фаза 4)
     _u8g2.setCursor(0, 28);
-    _u8g2.print("A:");
-    _u8g2.print(angleDeg);
-    _u8g2.print((char)176);
+    if (isPwm) {
+        _u8g2.print("A:");
+        _u8g2.print(angleDeg);
+        _u8g2.print((char)176);   // символ градуса
+    } else {
+        _u8g2.print("R:");
+        _u8g2.print(rawValue);    // "сырое" значение (48..2047 для DShot, us для OS/MS)
+    }
 
     _u8g2.sendBuffer();
 }

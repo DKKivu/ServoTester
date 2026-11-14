@@ -302,8 +302,10 @@ void ServoTesterApp::updateSweep(unsigned long now) {
 }
 
 int ServoTesterApp::angleFromThrottle() const {
-    // Фаза 4 добавит minAngle. Пока — от 0 до maxAngle.
-    return static_cast<int>(_throttle01 * _settings.maxAngle + 0.5f);
+    // Угол теперь масштабируется в настроенный диапазон [minAngle .. maxAngle].
+    return static_cast<int>(
+        _settings.minAngle +
+        _throttle01 * (_settings.maxAngle - _settings.minAngle) + 0.5f);
 }
 
 // -------------------- отрисовка --------------------
