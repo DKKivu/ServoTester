@@ -8,7 +8,11 @@ public:
 
     void begin() override;
     void showBoot() override;
-    void showRunning(Mode mode, int pulseUs, int angleDeg) override;
+    void showRunning(Mode mode,
+                     const char* protocol,
+                     int rawValue,
+                     float normalized,
+                     int angleDeg) override;
     void showMainMenu(int selected) override;
     void showSettingsMenu(const Settings& s, int selected) override;
 

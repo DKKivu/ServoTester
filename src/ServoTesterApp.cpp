@@ -21,10 +21,13 @@ void ServoTesterApp::begin() {
     _storage.load(_settings);
     _settings.clampAll();
 
+    // Safety: PWM-серво по центру, ESC-протоколы — на нуле.
+    _throttle01 = (_settings.protocol == EscProtocol::PWM) ? 0.5f : 0.0f;
+
     _encoder.begin();
     _button.begin();
 
-    rebuildEscOutput(); // создаём нужный протокол
+    rebuildEscOutput();
 
     _display.begin();
     _display.showBoot();
@@ -56,14 +59,18 @@ void ServoTesterApp::handleEncoder(int delta) {
 void ServoTesterApp::handleRunningEncoder(int delta) {
     switch (_mode) {
         case Mode::Manual:
-            _esc->setRaw(constrain(_esc->getRaw() + delta * _settings.step,
-                                   _settings.minPulse, _settings.maxPulse));
+            _throttle01 = constrain(_throttle01 + delta * stepNormalized(), 0.0f, 1.0f);
+            _esc->setNormalized(_throttle01);
             break;
         case Mode::Sweep:
             _settings.sweepSpeed = constrain(_settings.sweepSpeed + delta, 5, 100);
             break;
         case Mode::Step:
-            _settings.step = constrain(_settings.step + delta, 1, 50);
+            if (_settings.protocol == EscProtocol::PWM) {
+                _settings.step = constrain(_settings.step + delta, 1, 50);
+            } else {
+                _settings.stepPercent = constrain(_settings.stepPercent + delta, 1, 20);
+            }
             break;
         case Mode::Center:
             break;
@@ -78,36 +85,44 @@ void ServoTesterApp::handleMenuEncoder(int delta) {
         return;
     }
 
-    // Settings
     switch (static_cast<SettingsItem>(_menuIndex)) {
         case SettingsItem::MinPulse:
             _settings.minPulse = constrain(_settings.minPulse + delta * 10, 500, 1500);
-            recalculateFromMaxPulse();
             break;
-        case SettingsItem::MaxPulse:
-            _settings.maxPulse = constrain(_settings.maxPulse + delta * 10, 1500, 2500);
-            recalculateFromMaxPulse();
+        case SettingsItem::MaxPulse: {
+            const int oldValue = _settings.maxPulse;
+            const int newValue = constrain(oldValue + delta * 10, 1500, 2500);
+            recalculateFromMaxPulse(oldValue, newValue);
             break;
+        }
         case SettingsItem::Step:
             _settings.step = constrain(_settings.step + delta, 1, 50);
+            break;
+        case SettingsItem::StepPercent:
+            _settings.stepPercent = constrain(_settings.stepPercent + delta, 1, 20);
             break;
         case SettingsItem::SweepSpeed:
             _settings.sweepSpeed = constrain(_settings.sweepSpeed + delta, 5, 100);
             break;
         case SettingsItem::MinAngle:
             _settings.minAngle = constrain(_settings.minAngle + delta, 0, 180);
-            recalculateFromMaxAngle();
             break;
-        case SettingsItem::MaxAngle:
-            _settings.maxAngle = constrain(_settings.maxAngle + delta, 90, 360);
-            recalculateFromMaxAngle();
+        case SettingsItem::MaxAngle: {
+            const int oldValue = _settings.maxAngle;
+            const int newValue = constrain(oldValue + delta, 90, 360);
+            recalculateFromMaxAngle(oldValue, newValue);
             break;
+        }
         case SettingsItem::Protocol: {
             int p = static_cast<int>(_settings.protocol) + delta;
             if (p < 0) p = static_cast<int>(EscProtocol::_Count) - 1;
             if (p >= static_cast<int>(EscProtocol::_Count)) p = 0;
             _settings.protocol = static_cast<EscProtocol>(p);
-            rebuildEscOutput(); // пересоздаём выход при смене протокола
+            // Safety: при переходе на ESC-протокол — минимальный газ.
+            if (_settings.protocol != EscProtocol::PWM) {
+                _throttle01 = 0.0f;
+            }
+            rebuildEscOutput();
             break;
         }
         default: break;
@@ -121,8 +136,8 @@ void ServoTesterApp::handleButton(ButtonEvent ev) {
                 enterMenu();
             } else if (ev == ButtonEvent::Click) {
                 if (_mode == Mode::Step) {
-                    _esc->setRaw(constrain(_esc->getRaw() + _settings.step,
-                                           _settings.minPulse, _settings.maxPulse));
+                    _throttle01 = constrain(_throttle01 + stepNormalized(), 0.0f, 1.0f);
+                    _esc->setNormalized(_throttle01);
                 } else {
                     cycleMode();
                 }
@@ -178,24 +193,72 @@ void ServoTesterApp::handleSettingsClick() {
 
 // -------------------- синхронизация --------------------
 
-void ServoTesterApp::recalculateFromMaxAngle() {
-    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
-                     (_settings.maxAngle - _settings.minAngle);
-    _settings.maxPulse = _settings.minPulse +
-                         static_cast<int>(usPerDeg * (_settings.maxAngle - _settings.minAngle));
-    _settings.clampAll();
+void ServoTesterApp::recalculateFromMaxAngle(int oldMaxAngle, int newMaxAngle) {
+    // Если пользователь не изменил значение — выходим.
+    if (newMaxAngle == oldMaxAngle) return;
+
+    // Защита от деления на ноль / инверсии диапазона.
+    if (oldMaxAngle <= _settings.minAngle) return;
+    if (newMaxAngle <= _settings.minAngle) {
+        // Отклоняем: нельзя опустить maxAngle ниже minAngle.
+        return;
+    }
+
+    // Соотношение «мкс на градус» по СТАРЫМ значениям.
+    const float usPerDeg =
+        static_cast<float>(_settings.maxPulse - _settings.minPulse) /
+        static_cast<float>(oldMaxAngle - _settings.minAngle);
+
+    // Новый maxPulse, сохраняющий то же соотношение.
+    const int newMaxPulse = _settings.minPulse +
+        static_cast<int>(usPerDeg * (newMaxAngle - _settings.minAngle) + 0.5f);
+
+    // Проверка границ ДО применения: если новое значение не укладывается,
+    // изменение отклоняется целиком — и maxAngle, и maxPulse остаются прежними.
+    if (newMaxPulse < 1500 || newMaxPulse > 2500) {
+        return;
+    }
+
+    _settings.maxAngle = newMaxAngle;
+    _settings.maxPulse = newMaxPulse;
 }
 
-void ServoTesterApp::recalculateFromMaxPulse() {
-    float usPerDeg = static_cast<float>(_settings.maxPulse - _settings.minPulse) /
-                     (_settings.maxAngle - _settings.minAngle);
-    if (usPerDeg <= 0.0f) return;
-    _settings.maxAngle = _settings.minAngle +
-                         static_cast<int>((_settings.maxPulse - _settings.minPulse) / usPerDeg);
-    _settings.clampAll();
+void ServoTesterApp::recalculateFromMaxPulse(int oldMaxPulse, int newMaxPulse) {
+    if (newMaxPulse == oldMaxPulse) return;
+
+    if (oldMaxPulse <= _settings.minPulse) return;
+    if (newMaxPulse <= _settings.minPulse) {
+        return;
+    }
+
+    // Соотношение «градусов на мкс» по СТАРЫМ значениям.
+    const float degPerUs =
+        static_cast<float>(_settings.maxAngle - _settings.minAngle) /
+        static_cast<float>(oldMaxPulse - _settings.minPulse);
+
+    // Новый maxAngle, сохраняющий то же соотношение.
+    const int newMaxAngleValue = _settings.minAngle +
+        static_cast<int>(degPerUs * (newMaxPulse - _settings.minPulse) + 0.5f);
+
+    // Проверка границ ДО применения.
+    if (newMaxAngleValue < 90 || newMaxAngleValue > 360) {
+        return;
+    }
+
+    _settings.maxPulse = newMaxPulse;
+    _settings.maxAngle = newMaxAngleValue;
 }
 
 // -------------------- ESC output --------------------
+
+float ServoTesterApp::stepNormalized() const {
+    if (_settings.protocol == EscProtocol::PWM) {
+        const int range = _settings.maxPulse - _settings.minPulse;
+        if (range <= 0) return 0.01f;
+        return static_cast<float>(_settings.step) / static_cast<float>(range);
+    }
+    return _settings.stepPercent / 100.0f;
+}
 
 void ServoTesterApp::rebuildEscOutput() {
     if (_esc) {
@@ -234,6 +297,7 @@ void ServoTesterApp::rebuildEscOutput() {
     }
 
     _esc->begin(_settings.minPulse, _settings.maxPulse);
+    _esc->setNormalized(_throttle01);   // восстановление текущей позиции
 }
 
 // -------------------- логика --------------------
@@ -245,8 +309,8 @@ void ServoTesterApp::cycleMode() {
 void ServoTesterApp::setMode(Mode m) {
     _mode = m;
     if (_mode == Mode::Center) {
-        const int center = (_settings.minPulse + _settings.maxPulse) / 2;
-        _esc->setRaw(center);
+        _throttle01 = 0.5f;
+        _esc->setNormalized(_throttle01);
     }
     if (_mode == Mode::Sweep) {
         _sweepUp = true;
@@ -267,21 +331,22 @@ void ServoTesterApp::updateSweep(unsigned long now) {
     if (now - _lastSweep < static_cast<unsigned long>(_settings.sweepSpeed)) return;
     _lastSweep = now;
 
-    int p = _esc->getRaw();
+    const float step = stepNormalized();
     if (_sweepUp) {
-        p += _settings.step;
-        if (p >= _settings.maxPulse) { p = _settings.maxPulse; _sweepUp = false; }
+        _throttle01 += step;
+        if (_throttle01 >= 1.0f) { _throttle01 = 1.0f; _sweepUp = false; }
     } else {
-        p -= _settings.step;
-        if (p <= _settings.minPulse) { p = _settings.minPulse; _sweepUp = true;  }
+        _throttle01 -= step;
+        if (_throttle01 <= 0.0f) { _throttle01 = 0.0f; _sweepUp = true; }
     }
-    _esc->setRaw(p);
+    _esc->setNormalized(_throttle01);
 }
 
-int ServoTesterApp::angleFromPulse() const {
-    return static_cast<int>(map(_esc->getRaw(),
-                                _settings.minPulse, _settings.maxPulse,
-                                0, _settings.maxAngle));
+int ServoTesterApp::angleFromThrottle() const {
+    // Угол масштабируется в настроенный диапазон [minAngle .. maxAngle].
+    return static_cast<int>(
+        _settings.minAngle +
+        _throttle01 * (_settings.maxAngle - _settings.minAngle) + 0.5f);
 }
 
 // -------------------- отрисовка --------------------
@@ -289,7 +354,11 @@ int ServoTesterApp::angleFromPulse() const {
 void ServoTesterApp::render() {
     switch (_menuState) {
         case MenuState::Off:
-            _display.showRunning(_mode, _esc->getRaw(), angleFromPulse());
+            _display.showRunning(_mode,
+                                 _esc->name(),
+                                 _esc->getRaw(),
+                                 _throttle01,
+                                 angleFromThrottle());
             break;
         case MenuState::Main:
             _display.showMainMenu(_menuIndex);

@@ -1,4 +1,5 @@
 #pragma once
+#include <driver/ledc.h>
 #include "IEscOutput.h"
 
 class MultishotEscOutput : public IEscOutput {
@@ -6,8 +7,7 @@ public:
     explicit MultishotEscOutput(uint8_t pin) : _pin(pin) {}
 
     void begin(int /*minPulseUs*/, int /*maxPulseUs*/) override {
-        // 32 кГц, 11-бит (максимум при 80 МГц APB: 80e6/32000 = 2500 → 11 бит)
-        ledcSetup(_channel, 32000, 11);
+        ledcSetup(_channel, 32000, 11); // 32 кГц, 11-бит
         ledcAttachPin(_pin, _channel);
 
         _min = 5;
@@ -21,28 +21,44 @@ public:
         applyPulse(_raw);
     }
 
-    void setThrottle(float percent) override {
-        percent = constrain(percent, 0.0f, 100.0f);
-        int us = _min + static_cast<int>((_max - _min) * percent / 100.0f);
+    int getRaw() const override { return _raw; }
+
+    void setNormalized(float v01) override {
+        v01 = constrain(v01, 0.0f, 1.0f);
+        const int us = _min + static_cast<int>((_max - _min) * v01 + 0.5f);
         setRaw(us);
     }
 
-    int getRaw() const override { return _raw; }
+    float getNormalized() const override {
+        if (_max <= _min) return 0.0f;
+        return static_cast<float>(_raw - _min) / static_cast<float>(_max - _min);
+    }
+
+    void setThrottle(float percent) override {
+        setNormalized(constrain(percent, 0.0f, 100.0f) / 100.0f);
+    }
+
     const char* name() const override { return "Multishot"; }
 
     ~MultishotEscOutput() override {
+        // Фаза 2: корректное освобождение канала LEDC.
+        ledc_stop(LEDC_LOW_SPEED_MODE,
+                  static_cast<ledc_channel_t>(_channel),
+                  0 /* idle_level = LOW */);
         ledcDetachPin(_pin);
     }
 
 private:
     void applyPulse(int us) {
-        const uint32_t periodUs = 31; // ~32.26 кГц
-        uint32_t duty = (static_cast<uint32_t>(us) << 11) / periodUs;
+        const uint32_t periodUs = 31;
+        const uint32_t duty = (static_cast<uint32_t>(us) << 11) / periodUs;
         ledcWrite(_channel, duty);
     }
 
     static constexpr uint8_t _channel = 1;
 
     uint8_t _pin;
-    int     _min = 5, _max = 25, _raw = 5;
+    int     _min = 5;
+    int     _max = 25;
+    int     _raw = 5;
 };

@@ -11,23 +11,37 @@ public:
 
     void begin(int /*minPulseUs*/, int /*maxPulseUs*/) override {
         _dshot.begin(_pin, mode());
-        DSHOT::arm();                 // арming обязателен для ESC
-        _raw = 48;                    // минимальный throttle (disarmed)
-        _dshot.set(_raw);
+
+        // Фаза 3: армируем ESC только один раз за всё время работы.
+        if (!_armed) {
+            DSHOT::arm();
+            _armed = true;
+        }
+
+        _raw = 48; // минимальный throttle (disarmed / 0%)
+        _dshot.set(static_cast<uint16_t>(_raw));
     }
 
     void setRaw(int value) override {
         _raw = constrain(value, 48, 2047);
-        _dshot.set(_raw);
-    }
-
-    void setThrottle(float percent) override {
-        percent = constrain(percent, 0.0f, 100.0f);
-        int val = 48 + static_cast<int>((2047 - 48) * percent / 100.0f);
-        setRaw(val);
+        _dshot.set(static_cast<uint16_t>(_raw));
     }
 
     int getRaw() const override { return _raw; }
+
+    void setNormalized(float v01) override {
+        v01 = constrain(v01, 0.0f, 1.0f);
+        const int value = 48 + static_cast<int>((2047 - 48) * v01 + 0.5f);
+        setRaw(value);
+    }
+
+    float getNormalized() const override {
+        return static_cast<float>(_raw - 48) / static_cast<float>(2047 - 48);
+    }
+
+    void setThrottle(float percent) override {
+        setNormalized(constrain(percent, 0.0f, 100.0f) / 100.0f);
+    }
 
     const char* name() const override {
         switch (_speed) {
@@ -39,6 +53,9 @@ public:
         return "DShot";
     }
 
+    // Явный запрос на переармировку (например, после включения питания ESC).
+    static void requestRearm() { _armed = false; }
+
 private:
     DSHOT::dshot_mode_t mode() const {
         switch (_speed) {
@@ -49,6 +66,8 @@ private:
         }
         return DSHOT::DSHOT300;
     }
+
+    static inline bool _armed = false; // C++17 inline static member
 
     uint8_t       _pin;
     DShotSpeed    _speed;

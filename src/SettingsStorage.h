@@ -13,26 +13,28 @@ class NvsSettingsStorage : public SettingsStorage {
 public:
     void load(Settings& s) override {
         _prefs.begin("servo", true);
-        s.minPulse   = _prefs.getInt("minPulse",   s.minPulse);
-        s.maxPulse   = _prefs.getInt("maxPulse",   s.maxPulse);
-        s.step       = _prefs.getInt("step",       s.step);
-        s.sweepSpeed = _prefs.getInt("sweepSpeed", s.sweepSpeed);
-        s.minAngle   = _prefs.getInt("minAngle",   s.minAngle);
-        s.maxAngle   = _prefs.getInt("maxAngle",   s.maxAngle);
-        s.protocol   = static_cast<EscProtocol>(
+        s.minPulse    = _prefs.getInt("minPulse",    s.minPulse);
+        s.maxPulse    = _prefs.getInt("maxPulse",    s.maxPulse);
+        s.step        = _prefs.getInt("step",        s.step);
+        s.stepPercent = _prefs.getInt("stepPercent", s.stepPercent);
+        s.sweepSpeed  = _prefs.getInt("sweepSpeed",  s.sweepSpeed);
+        s.minAngle    = _prefs.getInt("minAngle",    s.minAngle);
+        s.maxAngle    = _prefs.getInt("maxAngle",    s.maxAngle);
+        s.protocol    = static_cast<EscProtocol>(
             _prefs.getInt("protocol", static_cast<int>(s.protocol)));
         _prefs.end();
     }
 
     void save(const Settings& s) override {
         _prefs.begin("servo", false);
-        _prefs.putInt("minPulse",   s.minPulse);
-        _prefs.putInt("maxPulse",   s.maxPulse);
-        _prefs.putInt("step",       s.step);
-        _prefs.putInt("sweepSpeed", s.sweepSpeed);
-        _prefs.putInt("minAngle",   s.minAngle);
-        _prefs.putInt("maxAngle",   s.maxAngle);
-        _prefs.putInt("protocol",   static_cast<int>(s.protocol));
+        _prefs.putInt("minPulse",    s.minPulse);
+        _prefs.putInt("maxPulse",    s.maxPulse);
+        _prefs.putInt("step",        s.step);
+        _prefs.putInt("stepPercent", s.stepPercent);
+        _prefs.putInt("sweepSpeed",  s.sweepSpeed);
+        _prefs.putInt("minAngle",    s.minAngle);
+        _prefs.putInt("maxAngle",    s.maxAngle);
+        _prefs.putInt("protocol",    static_cast<int>(s.protocol));
         _prefs.end();
     }
 

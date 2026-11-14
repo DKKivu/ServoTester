@@ -8,7 +8,11 @@ public:
 
     virtual void begin() = 0;
     virtual void showBoot() = 0;
-    virtual void showRunning(Mode mode, int pulseUs, int angleDeg) = 0;
+    virtual void showRunning(Mode mode,
+                             const char* protocol,
+                             int rawValue,
+                             float normalized,
+                             int angleDeg) = 0;
     virtual void showMainMenu(int selected) = 0;
     virtual void showSettingsMenu(const Settings& s, int selected) = 0;
 };

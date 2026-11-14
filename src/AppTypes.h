@@ -19,8 +19,7 @@ enum class MainMenuItem : int {
 inline constexpr int MainMenuCount = static_cast<int>(MainMenuItem::_Count);
 
 enum class SettingsItem : int {
-    MinPulse = 0, MaxPulse, Step, SweepSpeed, MinAngle, MaxAngle,
-    Protocol,          // <-- новый пункт
-    Save, Back, _Count
+    MinPulse = 0, MaxPulse, Step, StepPercent, SweepSpeed,
+    MinAngle, MaxAngle, Protocol, Save, Back, _Count
 };
 inline constexpr int SettingsMenuCount = static_cast<int>(SettingsItem::_Count);
