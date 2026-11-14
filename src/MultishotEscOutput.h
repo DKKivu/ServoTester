@@ -1,4 +1,5 @@
 #pragma once
+#include <driver/ledc.h>
 #include "IEscOutput.h"
 
 class MultishotEscOutput : public IEscOutput {
@@ -40,6 +41,10 @@ public:
     const char* name() const override { return "Multishot"; }
 
     ~MultishotEscOutput() override {
+        // Фаза 2: корректное освобождение канала LEDC.
+        ledc_stop(LEDC_LOW_SPEED_MODE,
+                  static_cast<ledc_channel_t>(_channel),
+                  0 /* idle_level = LOW */);
         ledcDetachPin(_pin);
     }
 

@@ -1,4 +1,5 @@
 #pragma once
+#include <driver/ledc.h>
 #include "IEscOutput.h"
 
 enum class OneShotType { ONESHOT125, ONESHOT42 };
@@ -45,8 +46,13 @@ public:
     }
 
     ~OneShotEscOutput() override {
+        // Фаза 2: корректное освобождение канала LEDC.
+        // 1. Останавливаем канал, устанавливая idle-уровень LOW (нет импульсов = нет газа).
+        ledc_stop(LEDC_LOW_SPEED_MODE,
+                  static_cast<ledc_channel_t>(_channel),
+                  0 /* idle_level = LOW */);
+        // 2. Отвязываем пин от канала — пин становится свободным для других целей.
         ledcDetachPin(_pin);
-        // Фаза 2: освобождение канала — см. отдельный шаг. Пока оставляем.
     }
 
 private:
