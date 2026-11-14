@@ -1,19 +1,20 @@
-# Servo Tester Diagrams
+# ServoTester Diagrams
 
 These diagrams describe the current firmware in `src/`. Mermaid diagrams
 render on GitHub.
 
 ## Principal signal wiring
 
-Signal pin assignments and the OLED bus clock are defined in `src/main.cpp`
-and `src/OledDisplay.cpp`. Power pins are intentionally not specified: supply
-requirements depend on the exact board, OLED, and servo. Use a suitable servo
-supply; if it is separate, connect its ground to ESP32 ground.
+GPIO assignments are defined in `src/main.cpp`; the OLED bus clock is set in
+`src/OledDisplay.cpp`. GPIO 4 is a signal output only. Power wiring depends
+on the specific ESP32 board, display, servo, and ESC; observe their manuals
+and connect signal grounds as required. Remove propellers or mechanical loads
+when testing ESC outputs.
 
 ```mermaid
 flowchart LR
     subgraph MCU["ESP32-C3 DevKitM-1"]
-        P4["GPIO 4"]
+        P4["GPIO 4<br/>selected servo/ESC signal"]
         P0["GPIO 0"]
         P1["GPIO 1"]
         P3["GPIO 3<br/>INPUT_PULLUP"]
@@ -21,8 +22,8 @@ flowchart LR
         P6["GPIO 6"]
     end
 
-    subgraph SERVO["Hobby servo"]
-        SIG["Signal"]
+    subgraph OUTPUT["Compatible servo or ESC"]
+        SIG["Signal input"]
     end
     subgraph ENCODER["Rotary encoder"]
         A["A / CLK"]
@@ -34,7 +35,7 @@ flowchart LR
         SCL["SCL"]
     end
 
-    P4 -->|servo control pulse| SIG
+    P4 -->|PWM / OneShot / Multishot / DShot| SIG
     P0 -->|encoder A| A
     P1 -->|encoder B| B
     P3 -->|active-low button| SW
@@ -42,11 +43,30 @@ flowchart LR
     P6 -->|I2C clock| SCL
 ```
 
+## Output adapter selection
+
+```mermaid
+flowchart LR
+    APP["ServoTesterApp"] -->|select by saved EscProtocol| FACTORY["rebuildEscOutput()"]
+    FACTORY --> PWM["PwmEscOutput<br/>50 Hz"]
+    FACTORY --> OS["OneShotEscOutput<br/>OneShot125 / OneShot42"]
+    FACTORY --> MS["MultishotEscOutput<br/>32 kHz"]
+    FACTORY --> DS["DShotEscOutput<br/>DShot150 / 300 / 600 / 1200"]
+    PWM --> IFACE["IEscOutput"]
+    OS --> IFACE
+    MS --> IFACE
+    DS --> IFACE
+    IFACE --> PIN["GPIO 4"]
+```
+
+Current limitation: the app supplies raw values constrained by shared
+min/max settings; it does not normalize those values across adapter-specific
+domains. See [USER_MANUAL.md](USER_MANUAL.md) before using non-PWM protocols.
+
 ## UML class diagram
 
-`main.cpp` constructs the concrete adapters and injects them into
-`ServoTesterApp`. External Arduino and library classes are shown only where
-they clarify an adapter's implementation.
+`main.cpp` constructs storage, display, encoder, and button dependencies.
+`ServoTesterApp` constructs the selected output adapter.
 
 ```mermaid
 classDiagram
@@ -59,16 +79,10 @@ classDiagram
         -handleButton(event)
         -handleRunningEncoder(delta)
         -handleMenuEncoder(delta)
-        -handleMainMenuClick()
         -handleSettingsClick()
-        -recalculateFromMaxAngle()
-        -recalculateFromMaxPulse()
+        -rebuildEscOutput()
         -updateSweep(now)
         -render()
-        -enterMenu()
-        -exitMenu()
-        -cycleMode()
-        -setMode(mode)
         -angleFromPulse()
     }
 
@@ -79,6 +93,7 @@ classDiagram
         +sweepSpeed: int
         +minAngle: int
         +maxAngle: int
+        +protocol: EscProtocol
         +clampAll()
     }
 
@@ -87,164 +102,107 @@ classDiagram
         +load(settings)
         +save(settings)
     }
-
-    class NvsSettingsStorage {
-        -Preferences _prefs
-        +load(settings)
-        +save(settings)
-    }
-
+    class NvsSettingsStorage
     class Display {
         <<interface>>
         +begin()
         +showBoot()
-        +showRunning(mode, pulseUs, angleDeg)
+        +showRunning(mode, rawValue, angleDeg)
         +showMainMenu(selected)
         +showSettingsMenu(settings, selected)
     }
-
-    class OledDisplay {
-        -U8G2_SSD1306_72X40_ER_F_HW_I2C _u8g2
-        +begin()
-        +showBoot()
-        +showRunning(mode, pulseUs, angleDeg)
-        +showMainMenu(selected)
-        +showSettingsMenu(settings, selected)
+    class OledDisplay
+    class RotaryEncoder
+    class Button
+    class IEscOutput {
+        <<interface>>
+        +begin(minPulseUs, maxPulseUs)
+        +setRaw(value)
+        +setThrottle(percent)
+        +getRaw()
+        +name()
     }
-
-    class RotaryEncoder {
-        -ESP_Knob* _knob
-        +begin()
-        +readDelta()
-    }
-
-    class Button {
-        +begin()
-        +poll(now)
-    }
-
-    class ServoOutput {
-        +begin(minUs, maxUs)
-        +setPulse(us)
-        +setPulseClamped(us, minUs, maxUs)
-        +getPulse()
-    }
-
-    class Mode {
+    class PwmEscOutput
+    class OneShotEscOutput
+    class MultishotEscOutput
+    class DShotEscOutput
+    class EscProtocol {
         <<enumeration>>
-        Manual
-        Sweep
-        Center
-        Step
+        PWM
+        OneShot125
+        OneShot42
+        Multishot
+        DShot150
+        DShot300
+        DShot600
+        DShot1200
     }
 
-    class MenuState {
-        <<enumeration>>
-        Off
-        Main
-        Settings
-    }
-
-    class ButtonEvent {
-        <<enumeration>>
-        None
-        Click
-        LongPress
-    }
-
-    class MainMenuItem {
-        <<enumeration>>
-        Manual
-        Sweep
-        Center
-        Step
-        Settings
-    }
-
-    class SettingsItem {
-        <<enumeration>>
-        MinPulse
-        MaxPulse
-        Step
-        SweepSpeed
-        MinAngle
-        MaxAngle
-        Save
-        Back
-    }
-
-    NvsSettingsStorage ..|> SettingsStorage : implements
-    OledDisplay ..|> Display : implements
-    ServoTesterApp --> SettingsStorage : uses
-    ServoTesterApp --> Display : uses
-    ServoTesterApp --> RotaryEncoder : uses
-    ServoTesterApp --> Button : uses
-    ServoTesterApp --> ServoOutput : uses
-    ServoTesterApp *-- Settings : owns runtime settings
-    ServoTesterApp --> Mode : current mode
-    ServoTesterApp --> MenuState : current menu
-    ServoTesterApp ..> MainMenuItem : handles
-    ServoTesterApp ..> SettingsItem : handles
-    Button ..> ButtonEvent : emits
-    SettingsStorage ..> Settings : loads and saves
-    Display ..> Settings : displays
+    NvsSettingsStorage ..|> SettingsStorage
+    OledDisplay ..|> Display
+    PwmEscOutput ..|> IEscOutput
+    OneShotEscOutput ..|> IEscOutput
+    MultishotEscOutput ..|> IEscOutput
+    DShotEscOutput ..|> IEscOutput
+    ServoTesterApp --> SettingsStorage
+    ServoTesterApp --> Display
+    ServoTesterApp --> RotaryEncoder
+    ServoTesterApp --> Button
+    ServoTesterApp --> IEscOutput : selected implementation
+    ServoTesterApp *-- Settings
+    Settings --> EscProtocol
+    SettingsStorage ..> Settings
+    Display ..> Settings
 ```
 
 ## Application workflow
 
 ```mermaid
 flowchart TD
-    START([Power on or reset]) --> SETUP["setup(): start Serial at 115200"]
-    SETUP --> LOAD["app.begin(): load settings from NVS"]
-    LOAD --> CLAMP["Clamp all loaded/default settings"]
-    CLAMP --> INIT["Initialize encoder, button, servo, and OLED"]
-    INIT --> INITIAL_PULSE["Command servo to 1500 us"]
-    INITIAL_PULSE --> BOOT["Show boot screen for 800 ms"]
-    BOOT --> LOOP["app.loop()"]
+    START([Power on or reset]) --> SETUP["setup(): Serial at 115200"]
+    SETUP --> LOAD["Load settings from NVS; use defaults for missing keys"]
+    LOAD --> CLAMP["Clamp values and validate protocol"]
+    CLAMP --> INPUTS["Initialize encoder and active-low button"]
+    INPUTS --> SELECT["Construct and initialize selected output adapter"]
+    SELECT --> DISPLAY["Initialize OLED and show boot screen for 800 ms"]
+    DISPLAY --> LOOP["app.loop()"]
 
-    LOOP --> READ["Read encoder count delta"]
-    READ --> HAS_DELTA{"Delta != 0?"}
-    HAS_DELTA -- Yes --> MENU_OFF{"Menu state is Off?"}
-    MENU_OFF -- Yes --> RUN_EDIT["Apply active mode adjustment"]
-    MENU_OFF -- No --> MENU_EDIT["Move selection or edit setting"]
-    RUN_EDIT --> POLL["Poll active-low button"]
-    MENU_EDIT --> POLL
-    HAS_DELTA -- No --> POLL
-
-    POLL --> BUTTON_EVENT{"Click or long press?"}
-    BUTTON_EVENT -- Yes --> HANDLE["Handle event for current mode/menu"]
-    BUTTON_EVENT -- No --> SWEEP_CHECK
-    HANDLE --> SWEEP_CHECK{"Mode is Sweep and menu is Off?"}
-
+    LOOP --> READ["Read encoder delta"]
+    READ --> EDIT{"Encoder moved?"}
+    EDIT -- "running screen" --> MODE["Apply active mode behavior"]
+    EDIT -- "in menu" --> MENU["Move selection or edit setting"]
+    EDIT -- "no" --> POLL
+    MODE --> POLL["Poll button"]
+    MENU --> POLL
+    POLL --> EVENT{"Click or long press?"}
+    EVENT -- Yes --> HANDLE["Handle event for current mode/menu"]
+    EVENT -- No --> SWEEP_CHECK
+    HANDLE --> SWEEP_CHECK{"Sweep active outside menus?"}
     SWEEP_CHECK -- Yes --> ELAPSED{"Sweep interval elapsed?"}
-    ELAPSED -- Yes --> SWEEP["Advance pulse by step;<br/>reverse at pulse limits"]
+    ELAPSED -- Yes --> SWEEP["Adjust raw output; reverse at configured endpoints"]
     ELAPSED -- No --> RENDER
-    SWEEP --> RENDER["Render running view or active menu"]
+    SWEEP --> RENDER["Render running view or menu"]
     SWEEP_CHECK -- No --> RENDER
-
     RENDER --> WAIT["delay(20 ms)"]
     WAIT --> LOOP
 ```
 
-### Input and persistence details
+## Input and persistence notes
 
-- In Manual mode, encoder rotation changes pulse width by `step`; in Sweep
-  mode it changes the interval by 1 ms; in Step mode it changes `step` by 1
-  µs; Center ignores encoder rotation.
-- A short press cycles mode except in Step mode, where it advances the pulse
-  by `step`. Selecting Center commands the pulse-range midpoint. A long press
-  opens the main menu from the running screen.
-- The main-menu selection wraps. In Settings, a click on a numeric item
-  advances to the next item; **Save** persists to NVS, while **Back** and
-  long-press return to the main menu without saving.
-- Settings defaults are `minPulse=500`, `maxPulse=2500`, `step=10`,
-  `sweepSpeed=20`, `minAngle=0`, and `maxAngle=180`.
-- Startup/storage clamps are `minPulse=0–1500`, `maxPulse=1500–3500`,
-  `step=1–50`, `sweepSpeed=5–100`, `minAngle=0–180`, and `maxAngle=90–360`.
-  The interactive pulse-edit ranges are narrower: `minPulse=500–1500` and
-  `maxPulse=1500–2500`; all menu adjustments use the increments described in
-  [USER_MANUAL.md](USER_MANUAL.md).
-- The angle display uses Arduino `map()` to map `minPulse..maxPulse` to
-  `0..maxAngle`; `minAngle` is not used by that displayed-angle calculation.
-  The pulse/angle settings handlers also call recalculation methods when those
-  values are edited. The display is command-derived, not position feedback.
+- Running mode cycle: **Manual → Sweep → Center → Step → Manual**.
+- Manual adjusts output by `delta * step`; Sweep adjusts interval; Step
+  adjusts step size; Center ignores encoder rotation.
+- A click cycles mode except in Step mode, where it advances output once.
+  Selecting Center commands the configured min/max midpoint.
+- A long press opens the main menu. In Settings, a click advances to the next
+  item; **Save** persists settings, while **Back** and long press leave
+  without saving.
+- Settings defaults are `minPulse=1000`, `maxPulse=2000`, `step=10`,
+  `sweepSpeed=20`, `minAngle=0`, `maxAngle=120`, and `protocol=PWM`.
+- NVS namespace is `servo`. Protocol values are stored as enum integers;
+  invalid values are clamped back to PWM.
+- The displayed angle maps the raw output from configured min/max to
+  `0..maxAngle`. It does not use `minAngle` and is not position feedback.
+- The output adapters have different raw domains. The app currently does not
+  convert the shared min/max values and step size to each protocol's native
+  range; this limits non-PWM behavior.

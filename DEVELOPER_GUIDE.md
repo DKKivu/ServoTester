@@ -1,377 +1,199 @@
 # ServoTester Developer Guide
 
-This guide provides an in-depth explanation of the firmware architecture, code organization, and development practices for contributors and maintainers.
+This guide describes the current ESP32-C3 firmware architecture and the
+implementation details that matter when extending or maintaining it.
 
-## Architecture Overview
+## Architecture
 
-ServoTester follows a **clean architecture** with clear separation of concerns. The main application logic (`ServoTesterApp`) is decoupled from hardware specifics through abstraction layers and dependency injection.
-
-### Dependency Injection Pattern
-
-All major components are instantiated in `src/main.cpp` and injected into `ServoTesterApp`:
-
-```cpp
-static NvsSettingsStorage storage;  // Loads/saves settings from NVS
-static OledDisplay        display;   // Renders UI to OLED
-static RotaryEncoder      encoder;   // Reads encoder rotations
-static Button             button;    // Detects clicks/long-presses
-static ServoOutput        servo;     // Controls servo PWM signal
-
-static ServoTesterApp app(storage, display, encoder, button, servo);
-```
-
-This approach enables:
-- **Testability**: Components can be mocked for unit testing
-- **Flexibility**: Easy to swap implementations (e.g., different display types)
-- **Modularity**: Each component has a single responsibility
-
-### Component Responsibilities
+`src/main.cpp` is the composition root. It defines GPIO assignments and
+constructs the settings storage, OLED display, encoder, button, and
+`ServoTesterApp`. The app receives the ESC signal pin and constructs the
+selected output adapter itself.
 
 | Component | File | Responsibility |
-|-----------|------|---|
-| **ServoTesterApp** | `ServoTesterApp.{h,cpp}` | Central state machine; coordinates input → logic → output |
-| **OledDisplay** | `OledDisplay.{h,cpp}` | Renders UI to 72×40 OLED; screen transitions |
-| **RotaryEncoder** | `RotaryEncoder.h` | Wrapper around ESP32_Knob; detects rotation direction/speed |
-| **Button** | `Button.h` | Debounces active-low button; distinguishes clicks from long-presses |
-| **ServoOutput** | `ServoOutput.h` | PWM signal generation; servo pulse control |
-| **SettingsStorage** | `SettingsStorage.h` | Interface for persistent settings (NVS implementation provided) |
-| **Settings** | `Settings.h` | Data structure with range validation |
-| **AppTypes** | `AppTypes.h` | Enumerations for mode, menu state, and button events |
+| --- | --- | --- |
+| `ServoTesterApp` | `ServoTesterApp.h/.cpp` | Input dispatch, operating modes, menus, sweep logic, output selection, render dispatch |
+| `IEscOutput` | `IEscOutput.h` | Common interface for output protocol implementations |
+| `PwmEscOutput` | `PwmEscOutput.h` | PWM signal generation using ESP32Servo |
+| `OneShotEscOutput` | `OneShotEscOutput.h` | OneShot125 and OneShot42 generation using LEDC |
+| `MultishotEscOutput` | `MultishotEscOutput.h` | Multishot generation using LEDC |
+| `DShotEscOutput` | `DShotEscOutput.h` | DShot generation using ESP32_DSHOT |
+| `EscProtocol` | `EscProtocol.h` | Protocol enum, names, and protocol-cycle helper |
+| `Settings` | `Settings.h` | Defaults and validation/clamping |
+| `NvsSettingsStorage` | `SettingsStorage.h` | Load/save settings in ESP32 Preferences NVS |
+| `OledDisplay` | `OledDisplay.h/.cpp` | OLED screens using U8g2 |
+| `RotaryEncoder` | `RotaryEncoder.h` | ESP32_Knob input adapter |
+| `Button` | `Button.h` | Active-low button event detection |
+| `AppTypes` | `AppTypes.h` | Operating mode and menu item enums |
+| `Display` | `Display.h` | UI abstraction |
 
-## State Management
+The output abstraction allows protocol drivers to be changed independently
+from the UI and menu state. In the current implementation, however, the app
+uses `setRaw()` directly; `setThrottle()` exists on every adapter but is not
+called by `ServoTesterApp`.
 
-ServoTesterApp maintains three primary state variables:
+## Startup and main loop
 
-### 1. **Current Mode** (`_mode`)
-```cpp
-enum class Mode { Manual, Sweep, Center, Step }
-```
-Controls how encoder input is interpreted:
-- **Manual**: Adjust pulse width
-- **Sweep**: Adjust sweep interval
-- **Center**: No encoder input (moves to midpoint)
-- **Step**: Adjust step size
+At startup, `ServoTesterApp::begin()` loads settings from the `servo` NVS
+namespace, clamps them, initializes the encoder and button, constructs the
+selected output adapter, initializes the OLED, and shows the boot screen for
+800 ms.
 
-### 2. **Menu State** (`_menuState`)
-```cpp
-enum class MenuState { Off, Main, Settings }
-```
-Determines which input handler processes encoder/button:
-- **Off**: Running mode active (not in menu)
-- **Main**: Mode selection menu
-- **Settings**: Settings edit menu
+The Arduino loop calls `ServoTesterApp::loop()`. Each iteration reads encoder
+movement, polls the button, advances Sweep if active, renders the current
+screen, and delays for 20 ms. Sweep uses elapsed `millis()` time, so update
+timing may be delayed by loop and display work.
 
-### 3. **Settings** (`_settings`)
-Live configuration that affects servo behavior. Persisted to NVS when user selects "Save".
+## Input and menus
 
-### 4. **Sweep State** (`_sweepUp`, `_lastSweep`)
-Tracks sweep direction and timing for automatic pulse iteration.
+`RotaryEncoder::readDelta()` returns encoder movement since its previous
+read. While the main screen is active, the current mode decides how that
+delta is used:
 
-## Input Handling
+- **Manual:** change the output by `delta * step`.
+- **Sweep:** change the interval by `delta` milliseconds.
+- **Center:** ignore encoder movement.
+- **Step:** change the configured step by `delta`.
 
-Input processing follows a pipeline: encoder → button → logic → servo update.
+A click cycles operating mode, except in Step mode where it advances the
+output by one step. Selecting Center commands the midpoint of the configured
+min/max values. Selecting Sweep resets its direction to increasing.
 
-### Encoder Reading
-The `RotaryEncoder` adapter calls the underlying ESP32_Knob library:
-```cpp
-int delta = _encoder.readDelta();  // Returns cumulative rotation since last read
-```
-Deltas are typically ±1 per detent and are multiplied by the configured step size when in Manual mode.
+The button is active-low on GPIO 3. `Button::poll()` reports a click on release
+after a press shorter than 500 ms, and a long press after the held duration
+exceeds 700 ms. Durations from 500 through 700 ms produce no event.
 
-### Button Processing
-The `Button` class performs debouncing and detects two event types:
+A long press on the running screen opens the main menu. In Settings, encoder
+rotation edits the selected item; a click advances to the next item. Protocol
+edits immediately replace and initialize the output adapter. **Save** writes
+all values to NVS and returns to the main menu; **Back** and long press leave
+without saving.
 
-```cpp
-enum class ButtonEvent { None, Click, LongPress }
-```
+## Settings and persistence
 
-- **Click** (press < 500 ms): Cycles mode or advances pulse (context-dependent)
-- **LongPress** (hold ≥ 700 ms): Enters/exits menu
+The `Settings` defaults and startup/storage clamps are:
 
-The button is configured as active-low with internal pull-up on GPIO 3.
+| Setting | Default | Clamp |
+| --- | ---: | ---: |
+| `minPulse` | 1000 | 500–1500 |
+| `maxPulse` | 2000 | 1500–2500 |
+| `step` | 10 | 1–50 |
+| `sweepSpeed` | 20 | 5–100 ms |
+| `minAngle` | 0 | 0–180 |
+| `maxAngle` | 120 | 90–360 |
+| `protocol` | PWM | PWM, OneShot125, OneShot42, Multishot, DShot150/300/600/1200 |
 
-### Input Dispatch
-`ServoTesterApp::handleEncoder()` routes to either:
-- `handleRunningEncoder()` when menu is off (affects pulse, interval, step, or does nothing)
-- `handleMenuEncoder()` when menu is open (moves selection or edits numeric setting)
+Menu pulse limits are edited in 10-unit increments; other numeric values use
+1-unit increments. `clampAll()` clamps pulse and angle endpoints
+independently, and does not ensure the min/max values differ. Angle
+recalculation assumes a nonzero angle span, so avoid setting `maxAngle` equal
+to `minAngle`.
 
-## Rendering Pipeline
+`NvsSettingsStorage` uses ESP32 Preferences namespace `servo`. It stores each
+setting by key, including the integer value of the protocol enum. Missing keys
+use the in-code defaults. Invalid protocol values are reset to PWM by
+`Settings::clampAll()`.
 
-The application renders the current state at each 20 ms loop iteration via `render()`:
+## Output protocols and current limits
 
-```cpp
-void ServoTesterApp::render() {
-    if (_menuState == MenuState::Off) {
-        int angleDeg = angleFromPulse();
-        _display.showRunning(_mode, _servo.getPulse(), angleDeg);
-    } else if (_menuState == MenuState::Main) {
-        _display.showMainMenu(_menuIndex);
-    } else if (_menuState == MenuState::Settings) {
-        _display.showSettingsMenu(_settings, _menuIndex);
-    }
-}
-```
+The selected adapter is built in `ServoTesterApp::rebuildEscOutput()` and
+receives the configured pulse limits in `begin()`. The adapter implementations
+currently use these native domains:
 
-### Display Interface
-The abstract `Display` interface defines what screens the UI must support:
+| Protocol | Adapter native range | Implementation |
+| --- | --- | --- |
+| PWM | Configured min/max microseconds | ESP32Servo at 50 Hz |
+| OneShot125 | 125–250 µs | LEDC at 2 kHz |
+| OneShot42 | 42–84 µs | LEDC at 2 kHz |
+| Multishot | 5–25 µs | LEDC at 32 kHz |
+| DShot150/300/600/1200 | Command values 48–2047 | ESP32_DSHOT |
 
-```cpp
-class Display {
-    virtual void showBoot() = 0;
-    virtual void showRunning(Mode mode, int pulseUs, int angleDeg) = 0;
-    virtual void showMainMenu(int selected) = 0;
-    virtual void showSettingsMenu(const Settings& s, int selected) = 0;
-};
-```
+**Known limitation:** The app clamps values to `minPulse..maxPulse` before
+calling `setRaw()`. It does not convert those configured values to the
+selected adapter's native domain. Consequently, OneShot and Multishot values
+are clamped by their adapters, and DShot gets the app-limited command range
+rather than a percentage mapped across its full range. The OLED labels the
+displayed number `P` even when the value is not a pulse width. Treat
+non-PWM operation as experimental; remove propellers and mechanical loads
+while validating signal behavior.
 
-`OledDisplay` implements this interface using U8g2 graphics library.
+The DShot adapter calls the library's `arm()` during initialization and then
+sends the minimum command value. Hardware compatibility and arming behavior
+depend on the ESC and library.
 
-## Settings & Persistence
+## Sweep and displayed angle
 
-### Settings Structure
-Located in `Settings.h`, with validation ranges:
+Sweep increments or decrements the current adapter raw value by `step`, at
+the configured interval, and reverses at the configured min/max endpoints.
+It has no acceleration or ramping. Since the app works on raw values, these
+limits and step values should not be assumed to have equivalent meaning
+across protocols.
 
-```cpp
-struct Settings {
-    int minPulse   = 500;      // 50–1500 µs
-    int maxPulse   = 2500;     // 1500–2500 µs
-    int step       = 10;       // 1–50 µs
-    int sweepSpeed = 20;       // 5–100 ms
-    int minAngle   = 0;        // 0–180°
-    int maxAngle   = 180;      // 90–360°
-    
-    void clampAll() { /* validates and constrains all ranges */ }
-};
-```
+`angleFromPulse()` uses Arduino `map()` to map the adapter's `getRaw()` value
+from configured `minPulse..maxPulse` to `0..maxAngle`. `minAngle` is not used
+in this display calculation. The result is a command-derived display value,
+not measured position feedback.
 
-### NVS Persistence
-`NvsSettingsStorage` uses ESP32's Preferences library to store/load from the "servo" namespace:
+## Extending the firmware
 
-```cpp
-class NvsSettingsStorage : public SettingsStorage {
-    void load(Settings& s) override {
-        Preferences prefs;
-        prefs.begin("servo");
-        s.minPulse = prefs.getInt("minPulse", 500);
-        // ... other fields
-        prefs.end();
-    }
-    
-    void save(const Settings& s) override {
-        Preferences prefs;
-        prefs.begin("servo");
-        prefs.putInt("minPulse", s.minPulse);
-        // ... other fields
-        prefs.end();
-    }
-};
-```
+### Add an output protocol
 
-### Save Behavior
-- Settings are loaded at startup via `app.begin()`
-- User changes in the settings menu are **live** but NOT persisted
-- Only selecting **Save** in settings menu writes to NVS
-- **Back** or long-press returns to menu without saving
-- This allows users to experiment without permanent changes
+1. Add the protocol enum entry and full display name in `EscProtocol.h`.
+2. Implement `IEscOutput` in a new adapter under `src/`.
+3. Add a compact choice label to the settings rendering in `OledDisplay.cpp`.
+4. Construct the adapter in `ServoTesterApp::rebuildEscOutput()`.
+5. Define and test how app-level limits, steps, and displayed units map to
+   the adapter's native domain. Do not rely on independent adapter clamping
+   as a substitute for this mapping.
+6. Add the required library to `platformio.ini` and update user-facing docs.
 
-## Sweep Logic
+### Add a setting
 
-The `updateSweep()` function implements automatic pulse iteration:
+1. Add a default and clamp in `Settings.h`.
+2. Add a `SettingsItem` in `AppTypes.h`.
+3. Add encoder edit handling in `ServoTesterApp::handleMenuEncoder()`.
+4. Add its label and display value in `OledDisplay.cpp`.
+5. Add NVS load/save in `SettingsStorage.h`.
+6. Update the manual and README, including the setting's units and limits.
 
-```cpp
-void ServoTesterApp::updateSweep(unsigned long now) {
-    if (_mode != Mode::Sweep || _menuState != MenuState::Off) return;
-    
-    if (now - _lastSweep >= (unsigned)_settings.sweepSpeed) {
-        int pulse = _servo.getPulse();
-        if (_sweepUp) {
-            pulse += _settings.step;
-            if (pulse >= _settings.maxPulse) {
-                pulse = _settings.maxPulse;
-                _sweepUp = false;
-            }
-        } else {
-            pulse -= _settings.step;
-            if (pulse <= _settings.minPulse) {
-                pulse = _settings.minPulse;
-                _sweepUp = true;
-            }
-        }
-        _servo.setPulse(pulse);
-        _lastSweep = now;
-    }
-}
-```
+### Add an operating mode
 
-Key points:
-- Implemented as a **triangle wave** oscillator
-- Reverses direction instantly at endpoints (no deceleration)
-- Interval is configurable via encoder in Sweep mode
-- Only runs when menu is off and mode is Sweep
+1. Add a value to `Mode` in `AppTypes.h`.
+2. Update the mode cycle and running-mode input behavior in
+   `ServoTesterApp.cpp`.
+3. Update menu selection/rendering and the OLED running label if needed.
+4. Update the user manual and diagrams.
 
-## Angle Calculation
+## Build and verification
 
-The displayed angle is a **linear mapping** from pulse width, not actual servo position feedback:
+Build with PlatformIO:
 
-```cpp
-int ServoTesterApp::angleFromPulse() const {
-    int pulse = _servo.getPulse();
-    if (_settings.maxPulse == _settings.minPulse) return 0;
-    
-    int numerator = (pulse - _settings.minPulse) * _settings.maxAngle;
-    return numerator / (_settings.maxPulse - _settings.minPulse);
-}
-```
-
-Formula:
-```
-angle = (pulse - minPulse) / (maxPulse - minPulse) * maxAngle
-```
-
-This is a **display convenience** and does not represent actual servo position. The firmware sends the pulse command but does not read feedback.
-
-## Synchronization Logic
-
-When the user edits MinPulse, MaxPulse, MinAngle, or MaxAngle, the firmware maintains consistency between pulse-space and angle-space:
-
-- **`recalculateFromMaxPulse()`**: Called when pulse limits change; recomputes angle display
-- **`recalculateFromMaxAngle()`**: Called when angle limits change; optionally adjusts pulse range
-
-(Full implementation in `ServoTesterApp.cpp`)
-
-## Loop Timing
-
-The main loop runs at a fixed 20 ms tick:
-
-```cpp
-void ServoTesterApp::loop() {
-    const unsigned long now = millis();
-    
-    const int delta = _encoder.readDelta();
-    if (delta != 0) handleEncoder(delta);
-    
-    const ButtonEvent ev = _button.poll(now);
-    if (ev != ButtonEvent::None) handleButton(ev);
-    
-    updateSweep(now);
-    render();
-    
-    delay(20);  // Fixed 20 ms tick
-}
-```
-
-- No jitter compensation (acceptable for this application)
-- Input processing is non-blocking
-- Display updates occur every tick
-- Sweep timing is based on elapsed time, not loop count (resilient to timing jitter)
-
-## GPIO Pin Assignment
-
-All pins are defined as compile-time constants in `main.cpp`:
-
-```cpp
-constexpr uint8_t PIN_SERVO    = 4;   // PWM servo output
-constexpr uint8_t PIN_ENC_CLK  = 0;   // Encoder phase A
-constexpr uint8_t PIN_ENC_DT   = 1;   // Encoder phase B
-constexpr uint8_t PIN_ENC_SW   = 3;   // Encoder push button (active-low)
-constexpr uint8_t PIN_OLED_SDA = 5;   // I2C data
-constexpr uint8_t PIN_OLED_SCL = 6;   // I2C clock
-```
-
-To reconfigure pins, modify these constants and recompile.
-
-## Building & Debugging
-
-### Building
-```bash
+```sh
 pio run
 ```
 
-### Uploading
-```bash
-pio run --target upload
-```
+Upload and monitor:
 
-### Serial Monitoring
-```bash
+```sh
+pio run --target upload
 pio device monitor
 ```
 
-Serial output is configured for 115200 baud via the Arduino Serial API. Currently, no debug output is generated; you can add Serial.print() calls for troubleshooting.
+The configured environment is `esp32-c3-devkitm-1`; serial is 115200 baud.
+The project currently has no automated unit-test suite. Verify changes with a
+build and hardware checks appropriate to the selected signal protocol.
 
-### Build Configuration
-`platformio.ini` specifies:
-- Board: `esp32-c3-devkitm-1`
-- Framework: Arduino
-- Libraries: U8g2, ESP32Servo, ESP32_Knob
-- Compiler flags: `-std=gnu++17` (C++17 enabled)
+## Hardware checks
 
-## Adding Features
+- Verify GPIO assignments and the selected protocol against the target servo
+  or ESC documentation.
+- Use a suitable supply and common ground where required; GPIO 4 is signal
+  only.
+- Remove propellers or disconnect mechanical loads during ESC testing.
+- Check OLED I2C wiring on GPIO 5/6 at 400 kHz.
+- If encoder direction is reversed, check the GPIO 0/1 phase assignments.
 
-### Adding a New Mode
-1. Add enum value to `Mode` in `AppTypes.h`
-2. Add menu entry to `MainMenuItem` if desired
-3. Handle encoder input in `ServoTesterApp::handleRunningEncoder()`
-4. Handle button input in `ServoTesterApp::handleMainMenuClick()` (if mode has special behavior)
-5. Add display logic in `ServoTesterApp::render()`
+## Dependencies
 
-### Adding a New Setting
-1. Add field to `Settings` struct with default and range
-2. Add `clampAll()` constraint
-3. Add `SettingsItem` enum value in `AppTypes.h`
-4. Handle encoder in `ServoTesterApp::handleMenuEncoder()`
-5. Add menu display entry in `OledDisplay::showSettingsMenu()`
-6. Add NVS load/save in `NvsSettingsStorage`
-
-### Adding a New Display
-1. Create a new class implementing the `Display` interface
-2. Instantiate in `main.cpp` and pass to `ServoTesterApp` constructor
-3. Implement required methods: `begin()`, `showBoot()`, `showRunning()`, `showMainMenu()`, `showSettingsMenu()`
-
-## Testing Recommendations
-
-### Unit Tests
-- Test `Settings::clampAll()` with edge cases
-- Test `angleFromPulse()` with various pulse ranges
-- Mock `Display`, `SettingsStorage`, `ServoOutput` to test state transitions
-
-### Integration Tests
-- Verify mode cycle: Manual → Sweep → Center → Step → Manual
-- Verify menu navigation and persistence
-- Verify sweep timing accuracy
-- Verify angle calculation across different pulse ranges
-
-### Hardware Tests
-- Verify I2C communication with OLED on startup
-- Verify servo PWM output on GPIO 4
-- Verify encoder A/B phase relationship
-- Verify button debounce behavior
-
-## Common Issues & Troubleshooting
-
-| Issue | Likely Cause | Solution |
-|-------|------|------|
-| OLED blank on startup | I2C address mismatch | Verify SDA/SCL GPIO; check U8g2 constructor in OledDisplay |
-| Servo doesn't move | GPIO 4 not configured for PWM | Verify ServoOutput initialization |
-| Encoder unresponsive | GPIO 0/1 not detected | Check ESP32_Knob setup; verify encoder polarity |
-| Button doesn't work | GPIO 3 pull-up not enabled | Verify Button::begin() configures INPUT_PULLUP |
-| Settings not persisting | NVS partition too small | Check ESP32 partition table; verify Preferences namespace |
-| Jittery servo motion | Loop timing not stable | Add telemetry output; profile loop timing with Serial |
-
-## Future Improvements
-
-- [ ] Add Serial debug output for troubleshooting
-- [ ] Implement adaptive loop timing with jitter compensation
-- [ ] Add unit tests for core logic
-- [ ] Support servo position feedback (requires hardware changes)
-- [ ] Add calibration mode for servo limits
-- [ ] Implement preset profiles (save multiple configurations)
-- [ ] Add external control interface (e.g., Bluetooth LE)
-- [ ] Improve error handling for I2C/initialization failures
-
-## References
-
-- [ESP32-C3 DevKitM-1 Datasheet](https://docs.espressif.com/projects/esp-idf/en/latest/esp32c3/)
-- [U8g2 Library Documentation](https://github.com/olikraus/u8g2/wiki)
-- [ESP32Servo Library](https://github.com/madhephaestus/ESP32Servo)
-- [ESP32_Knob Library](https://github.com/esp-arduino-libs/ESP32_Knob)
+PlatformIO manages U8g2, ESP32Servo, ESP32_Knob, and ESP32_DSHOT. Dependency
+versions and URLs are declared in `platformio.ini`.

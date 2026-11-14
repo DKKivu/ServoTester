@@ -1,6 +1,6 @@
 # ServoTester
 
-**ServoTester** is a professional-grade firmware application for the ESP32-C3 DevKitM-1 microcontroller designed to test and calibrate hobby servo motors. It provides intuitive manual and automated control modes, persistent configuration, and a real-time display interface.
+**ServoTester** is firmware for the ESP32-C3 DevKitM-1 that generates control signals for hobby servos and compatible ESCs. It provides manual and automated output modes, a rotary-encoder interface, an OLED display, and persistent configuration.
 
 ### Quick Start
 - **Users**: See [USER_MANUAL.md](USER_MANUAL.md) for operating instructions
@@ -9,28 +9,37 @@
 
 ## Overview
 
-The firmware drives a hobby servo with configurable pulse limits across four control modes:
-- **Manual**: Direct encoder control of pulse width
-- **Sweep**: Automated triangular wave between min/max pulse
-- **Center**: Move to midpoint of configured range
-- **Step**: Increment pulse by fixed steps
+Four operating modes control the selected output:
+- **Manual**: Adjust the output value with the encoder
+- **Sweep**: Repeatedly move between configured limits
+- **Center**: Move to the midpoint of the configured range
+- **Step**: Increment the output by one configured step on each click
 
-A rotary encoder and push button provide input control; a 72×40 pixel OLED displays the current mode, pulse width in microseconds, and estimated servo angle. All settings are persisted to the ESP32's non-volatile storage.
+The output protocol is configurable: PWM, OneShot125, OneShot42, Multishot,
+and DShot150/300/600/1200. PWM is the default.
 
-**Important**: The displayed angle is a linear mapping from pulse width and is **not** based on servo position feedback. It's a display convenience for calibration.
+A rotary encoder and push button provide input; a 72×40 pixel OLED shows the
+current mode, output value, and a derived angle. Settings, including the
+selected protocol, are stored in ESP32 non-volatile storage (NVS) when saved.
+
+**Important:** The angle is derived from the output value and configured
+limits. It is not measured servo or motor position feedback.
 
 ## Hardware Pins
 
 | Connection | ESP32-C3 GPIO | Notes |
 | --- | ---: | --- |
-| Servo signal | 4 | PWM output; connect to servo signal pin |
+| Servo/ESC signal | 4 | Output signal; connect to compatible signal input |
 | Encoder A (CLK) | 0 | Phase A from rotary encoder |
 | Encoder B (DT) | 1 | Phase B from rotary encoder |
 | Encoder button | 3 | Active-low with internal pull-up |
 | OLED SDA | 5 | I2C data; check OLED voltage requirements |
 | OLED SCL | 6 | I2C clock; 400 kHz hardware I2C |
 
-**Power Wiring**: The firmware does not configure power. Use a servo supply suitable for your motor; if separate from ESP32 power, connect all grounds together. Verify OLED power requirements (typically 3.3V or 5V) before connecting.
+**Power and safety:** GPIO 4 is a signal output, not a power supply. Follow the
+servo/ESC manufacturer's wiring and voltage requirements and connect grounds
+as required. Remove propellers or disconnect mechanical loads before testing
+ESCs. The firmware does not measure motor speed, position, or current.
 
 **Button Behavior**: The encoder push button is read as active-low with the ESP32's internal pull-up enabled. Button debouncing is handled by the firmware.
 
@@ -51,20 +60,28 @@ For detailed mode descriptions and usage, see [USER_MANUAL.md](USER_MANUAL.md).
 
 ## Configurable Settings
 
-The firmware provides six user-adjustable settings, all stored in ESP32 non-volatile storage (NVS):
+The firmware provides seven user-adjustable settings, stored in ESP32
+non-volatile storage (NVS):
 
 | Setting | Default | Range | Unit | Description |
 | --- | ---: | ---: | --- | --- |
-| Minimum pulse | 500 | 50–1500 | µs | Servo pulse width at 0° |
-| Maximum pulse | 2500 | 1500–2500 | µs | Servo pulse width at max angle |
+| Minimum pulse | 1000 | 500–1500 | µs | Lower output limit |
+| Maximum pulse | 2000 | 1500–2500 | µs | Upper output limit |
 | Step size | 10 | 1–50 | µs | Pulse increment per encoder detent |
 | Sweep interval | 20 | 5–100 | ms | Time between sweep steps |
-| Display min angle | 0 | 0–180 | ° | Lower bound of angle display scale |
-| Display max angle | 180 | 90–360 | ° | Upper bound of angle display scale |
+| Display min angle | 0 | 0–180 | ° | Lower angle setting |
+| Display max angle | 120 | 90–360 | ° | Upper angle scale value |
+| Output protocol | PWM | 8 choices | — | Signal-generation protocol |
 
-**Calibration**: The pulse and angle ranges are independent; you can configure the display scale separately from actual servo pulse limits. This is useful for testing non-standard servo ranges or mapping custom servo linkages.
+**Protocol note:** The shared Manual/Sweep controls still use the configured
+min/max values as raw numbers. Those controls are not yet normalized to each
+protocol's native range. In particular, OneShot and Multishot adapters clamp
+to much smaller native pulse values, while DShot uses command values. Treat
+non-PWM selections as experimental; remove propellers and loads, and verify
+the signal with appropriate equipment before connecting a motor.
 
-**Persistence**: Changes are live immediately but are only written to NVS when you select **Save** in the settings menu. Selecting **Back** or long-pressing returns to the main menu without saving, allowing safe experimentation.
+Changes are live immediately but are written to NVS only when you select
+**Save** in the settings menu. **Back** and long-press leave without saving.
 
 ## Building, Uploading & Monitoring
 
@@ -106,7 +123,7 @@ All build settings are defined in `platformio.ini`:
 - **Framework**: Arduino
 - **Compiler**: GCC with C++17 support
 - **Serial Monitor Speed**: 115200 baud
-- **Libraries**: U8g2, ESP32Servo, ESP32_Knob
+- **Libraries**: U8g2, ESP32Servo, ESP32_Knob, ESP32_DSHOT
 
 To customize GPIO pins, see `src/main.cpp` and modify the pin constants.
 
@@ -117,11 +134,13 @@ To customize GPIO pins, see `src/main.cpp` and modify the pin constants.
 | File | Purpose |
 | --- | --- |
 | `src/main.cpp` | **Composition root**: GPIO pin definitions, dependency instantiation, Arduino setup/loop |
-| `src/ServoTesterApp.{h,cpp}` | **Core application**: State machines, input handling, mode logic, sweep control, render dispatch |
+| `src/ServoTesterApp.{h,cpp}` | **Core application**: State machines, input handling, mode logic, sweep control, output adapter selection |
 | `src/OledDisplay.{h,cpp}` | **UI rendering**: OLED display screens using U8g2 library |
 | `src/RotaryEncoder.h` | **Input adapter**: Wrapper for ESP32_Knob library; detects encoder rotation |
 | `src/Button.h` | **Input handler**: Debouncing and click/long-press detection for active-low button |
-| `src/ServoOutput.h` | **Output driver**: PWM servo control via ESP32Servo library |
+| `src/IEscOutput.h` | **Output interface**: Common ESC/servo output contract |
+| `src/*EscOutput.h` | **Output adapters**: PWM, OneShot, Multishot, and DShot implementations |
+| `src/EscProtocol.h` | **Protocol selection**: Protocol enum, display names, cycling |
 | `src/SettingsStorage.h` | **Persistence interface**: Abstraction for loading/saving settings |
 | `src/NvsSettingsStorage` (in SettingsStorage.h) | **Persistence implementation**: NVS-based storage using ESP32 Preferences API |
 | `src/Settings.h` | **Configuration**: Settings data structure with range validation |
@@ -139,47 +158,19 @@ To customize GPIO pins, see `src/main.cpp` and modify the pin constants.
 
 ## Technical Notes
 
-### Angle Calculation
+### Output values and angle display
 
-The displayed servo angle is calculated from the pulse width using a **linear mapping**:
+The displayed angle maps the selected output's raw value between configured
+min/max settings to `0..maxAngle`. It does not use `minAngle` in the display
+calculation and is not feedback from the servo or ESC. The raw output is
+protocol-specific: PWM and OneShot/Multishot use pulse widths; DShot uses
+digital throttle command values.
 
-```
-angle = (pulse - minPulse) / (maxPulse - minPulse) × maxAngle
-```
-
-**Important**: This is a display convenience and **not** based on actual servo position feedback. The firmware sends pulse commands but does not read servo position. Actual servo travel depends on:
-- Servo linkage geometry
-- Servo mechanical limits
-- Physical load on the servo
-- Servo calibration and center point
-
-Use the angle display as a reference during calibration, but verify actual servo behavior independently.
-
-### Sweep Algorithm
-
-The Sweep mode implements a simple **triangle wave oscillator**:
-1. Starts in the "up" direction
-2. Increments pulse by the step size at each interval
-3. Reverses direction at min/max pulse limits
-4. Continues indefinitely
-
-Sweep does not include velocity ramping or acceleration—it's pure rectangular steps. This is intentional for testing servo response to discrete pulse commands.
-
-### Settings Persistence
-
-All user settings are stored in the ESP32's **non-volatile storage (NVS)** under the namespace `servo`. This means:
-- Settings survive power cycles and firmware updates
-- Multiple applications on the same device can use different NVS namespaces
-- Settings are only written when user selects **Save** in the settings menu
-- Unsaved changes are live but are lost on reset
-
-### Hardware Design Notes
-
-- **Servo Supply**: Use a supply capable of delivering the servo's peak current. Do not share with ESP32 USB power if current exceeds ~500 mA.
-- **Ground Connection**: All grounds (ESP32, OLED, servo) must be common.
-- **Button Polarity**: The button pin (GPIO 3) is configured as active-low (pulled up internally). The button must pull GPIO 3 to ground when pressed.
-- **Encoder Polarity**: Encoder phases A and B (GPIO 0/1) should follow standard quadrature encoding. If rotation direction is reversed, swap the GPIO assignments in `src/main.cpp`.
-- **OLED Communication**: I2C runs at 400 kHz on GPIO 5/6. Some OLED modules may require external pull-ups if I2C communication is unreliable.
+PWM uses a 50 Hz signal and the configured pulse limits. OneShot125 and
+OneShot42 use 125–250 µs and 42–84 µs respectively; Multishot uses 5–25 µs.
+DShot options select 150, 300, 600, or 1200 kbit/s and use command values
+48–2047 in their adapter. The application-level limits currently do not
+translate to these native ranges; see the safety note above.
 
 ### Dependencies
 
@@ -188,6 +179,7 @@ All user settings are stored in the ESP32's **non-volatile storage (NVS)** under
 | **U8g2** | ^2.35.30 | BSD | Monochrome OLED graphics and rendering |
 | **ESP32Servo** | ^3.0.5 | LGPL | PWM servo signal generation and control |
 | **ESP32_Knob** | (git) | MIT | Rotary encoder reading and debouncing |
+| **ESP32_DSHOT** | (git) | — | DShot signal generation |
 
 All dependencies are managed by PlatformIO and are automatically fetched during build.
 

@@ -2,7 +2,21 @@
 
 namespace {
     const char* const MAIN_LABELS[]     = {"Manual", "Sweep", "Center", "Step", "Settings"};
-    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Save", "Back"};
+    const char* const SETTINGS_LABELS[] = {"MinPulse", "MaxPulse", "Step", "SweepSpd", "MinAngle", "MaxAngle", "Protocol", "Save", "Back"};
+
+    const char* protocolShortName(EscProtocol protocol) {
+        switch (protocol) {
+            case EscProtocol::PWM:        return "PWM";
+            case EscProtocol::OneShot125: return "O125";
+            case EscProtocol::OneShot42:  return "O42";
+            case EscProtocol::Multishot:  return "Multi";
+            case EscProtocol::DShot150:   return "D150";
+            case EscProtocol::DShot300:   return "D300";
+            case EscProtocol::DShot600:   return "D600";
+            case EscProtocol::DShot1200:  return "D1200";
+            default: return "?";
+        }
+    }
 }
 
 OledDisplay::OledDisplay(uint8_t sdaPin, uint8_t sclPin)
@@ -83,6 +97,10 @@ void OledDisplay::showSettingsMenu(const Settings& s, int selected) {
             case SettingsItem::SweepSpeed: _u8g2.print(":"); _u8g2.print(s.sweepSpeed); break;
             case SettingsItem::MaxAngle: _u8g2.print(":"); _u8g2.print(s.maxAngle); break;
             case SettingsItem::MinAngle: _u8g2.print(":"); _u8g2.print(s.minAngle); break;
+            case SettingsItem::Protocol:
+                _u8g2.print(":");
+                _u8g2.print(protocolShortName(s.protocol));
+                break;
             default: break;
         }
     }
