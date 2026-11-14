@@ -59,9 +59,9 @@ flowchart LR
     IFACE --> PIN["GPIO 4"]
 ```
 
-Current limitation: the app supplies raw values constrained by shared
-min/max settings; it does not normalize those values across adapter-specific
-domains. See [USER_MANUAL.md](USER_MANUAL.md) before using non-PWM protocols.
+The app controls every adapter through a normalized 0–1 output position;
+each adapter converts it to its native range. PWM min/max settings apply only
+to PWM.
 
 ## UML class diagram
 
@@ -81,15 +81,18 @@ classDiagram
         -handleMenuEncoder(delta)
         -handleSettingsClick()
         -rebuildEscOutput()
+        -stepNormalized()
         -updateSweep(now)
         -render()
-        -angleFromPulse()
+        -angleFromThrottle()
+        -_throttle01: float
     }
 
     class Settings {
         +minPulse: int
         +maxPulse: int
         +step: int
+        +stepPercent: int
         +sweepSpeed: int
         +minAngle: int
         +maxAngle: int
@@ -107,7 +110,7 @@ classDiagram
         <<interface>>
         +begin()
         +showBoot()
-        +showRunning(mode, rawValue, angleDeg)
+        +showRunning(mode, protocol, rawValue, normalized, angleDeg)
         +showMainMenu(selected)
         +showSettingsMenu(settings, selected)
     }
@@ -119,6 +122,8 @@ classDiagram
         +begin(minPulseUs, maxPulseUs)
         +setRaw(value)
         +setThrottle(percent)
+        +setNormalized(value01)
+        +getNormalized()
         +getRaw()
         +name()
     }
@@ -162,7 +167,8 @@ flowchart TD
     START([Power on or reset]) --> SETUP["setup(): Serial at 115200"]
     SETUP --> LOAD["Load settings from NVS; use defaults for missing keys"]
     LOAD --> CLAMP["Clamp values and validate protocol"]
-    CLAMP --> INPUTS["Initialize encoder and active-low button"]
+    CLAMP --> NORMALIZED["Set output to 50% for PWM, 0% for non-PWM"]
+    NORMALIZED --> INPUTS["Initialize encoder and active-low button"]
     INPUTS --> SELECT["Construct and initialize selected output adapter"]
     SELECT --> DISPLAY["Initialize OLED and show boot screen for 800 ms"]
     DISPLAY --> LOOP["app.loop()"]
@@ -179,7 +185,7 @@ flowchart TD
     EVENT -- No --> SWEEP_CHECK
     HANDLE --> SWEEP_CHECK{"Sweep active outside menus?"}
     SWEEP_CHECK -- Yes --> ELAPSED{"Sweep interval elapsed?"}
-    ELAPSED -- Yes --> SWEEP["Adjust raw output; reverse at configured endpoints"]
+    ELAPSED -- Yes --> SWEEP["Adjust normalized output; reverse at 0% / 100%"]
     ELAPSED -- No --> RENDER
     SWEEP --> RENDER["Render running view or menu"]
     SWEEP_CHECK -- No --> RENDER
@@ -190,21 +196,26 @@ flowchart TD
 ## Input and persistence notes
 
 - Running mode cycle: **Manual → Sweep → Center → Step → Manual**.
-- Manual adjusts output by `delta * step`; Sweep adjusts interval; Step
-  adjusts step size; Center ignores encoder rotation.
+- Manual adjusts normalized output using the active step; Sweep adjusts
+  interval; Step adjusts the PWM or percentage step size; Center ignores
+  encoder rotation.
 - A click cycles mode except in Step mode, where it advances output once.
-  Selecting Center commands the configured min/max midpoint.
+  Selecting Center commands 50% normalized output.
 - A long press opens the main menu. In Settings, a click advances to the next
   item; **Save** persists settings, while **Back** and long press leave
   without saving.
 - Protocol is shown as `Proto` with a compact value in the OLED Settings menu.
   Protocol changes take effect immediately; Save persists them.
 - Settings defaults are `minPulse=1000`, `maxPulse=2000`, `step=10`,
-  `sweepSpeed=20`, `minAngle=0`, `maxAngle=120`, and `protocol=PWM`.
+  `stepPercent=5`, `sweepSpeed=20`, `minAngle=0`, `maxAngle=120`, and
+  `protocol=PWM`.
 - NVS namespace is `servo`. Protocol values are stored as enum integers;
   invalid values are clamped back to PWM.
-- The displayed angle maps the raw output from configured min/max to
-  `0..maxAngle`. It does not use `minAngle` and is not position feedback.
-- The output adapters have different raw domains. The app currently does not
-  convert the shared min/max values and step size to each protocol's native
-  range; this limits non-PWM behavior.
+- The displayed angle maps normalized output to `minAngle..maxAngle`; it is
+  not position feedback. PWM displays pulse width and angle; non-PWM displays
+  throttle percent and raw protocol value.
+- PWM step is `step / (maxPulse - minPulse)`; non-PWM step is
+  `stepPercent / 100`.
+- `maxPulse` and `maxAngle` edits attempt to preserve the pulse/angle ratio;
+  the paired update is rejected if its resulting value is outside its allowed
+  range.

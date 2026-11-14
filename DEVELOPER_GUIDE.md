@@ -37,7 +37,9 @@ called by `ServoTesterApp`.
 At startup, `ServoTesterApp::begin()` loads settings from the `servo` NVS
 namespace, clamps them, initializes the encoder and button, constructs the
 selected output adapter, initializes the OLED, and shows the boot screen for
-800 ms.
+800 ms. `_throttle01` starts at 0.5 for PWM and 0.0 for non-PWM protocols.
+When the selected protocol changes to a non-PWM protocol, the app resets the
+normalized output to 0.0 before rebuilding the adapter.
 
 The Arduino loop calls `ServoTesterApp::loop()`. Each iteration reads encoder
 movement, polls the button, advances Sweep if active, renders the current
@@ -50,14 +52,14 @@ timing may be delayed by loop and display work.
 read. While the main screen is active, the current mode decides how that
 delta is used:
 
-- **Manual:** change the output by `delta * step`.
+- **Manual:** change normalized output by `delta * stepNormalized()`.
 - **Sweep:** change the interval by `delta` milliseconds.
 - **Center:** ignore encoder movement.
-- **Step:** change the configured step by `delta`.
+- **Step:** change `step` by `delta` for PWM, or `stepPercent` for non-PWM.
 
 A click cycles operating mode, except in Step mode where it advances the
-output by one step. Selecting Center commands the midpoint of the configured
-min/max values. Selecting Sweep resets its direction to increasing.
+normalized output by one step. Selecting Center commands 0.5 (50%) for every
+protocol. Selecting Sweep resets its direction to increasing.
 
 The button is active-low on GPIO 3. `Button::poll()` reports a click on release
 after a press shorter than 500 ms, and a long press after the held duration
@@ -82,16 +84,17 @@ The `Settings` defaults and startup/storage clamps are:
 | `minPulse` | 1000 | 500–1500 |
 | `maxPulse` | 2000 | 1500–2500 |
 | `step` | 10 | 1–50 |
+| `stepPercent` | 5 | 1–20% |
 | `sweepSpeed` | 20 | 5–100 ms |
 | `minAngle` | 0 | 0–180 |
 | `maxAngle` | 120 | 90–360 |
 | `protocol` | PWM | PWM, OneShot125, OneShot42, Multishot, DShot150/300/600/1200 |
 
 Menu pulse limits are edited in 10-unit increments; other numeric values use
-1-unit increments. `clampAll()` clamps pulse and angle endpoints
-independently, and does not ensure the min/max values differ. Angle
-recalculation assumes a nonzero angle span, so avoid setting `maxAngle` equal
-to `minAngle`.
+1-unit increments. `step` is used by PWM in microseconds, while
+`stepPercent` is used for non-PWM protocols. Pulse limits and angle endpoints
+are clamped independently. Avoid setting `minAngle` equal to or above
+`maxAngle`.
 
 `NvsSettingsStorage` uses ESP32 Preferences namespace `servo`. It stores each
 setting by key, including the integer value of the protocol enum. Missing keys
@@ -100,43 +103,49 @@ use the in-code defaults. Invalid protocol values are reset to PWM by
 
 ## Output protocols and current limits
 
-The selected adapter is built in `ServoTesterApp::rebuildEscOutput()` and
-receives the configured pulse limits in `begin()`. The adapter implementations
-currently use these native domains:
+`ServoTesterApp::rebuildEscOutput()` constructs the selected adapter and
+passes the configured pulse limits to `begin()`; non-PWM adapters use their
+own fixed native ranges.
 
-| Protocol | Adapter native range | Implementation |
-| --- | --- | --- |
-| PWM | Configured min/max microseconds | ESP32Servo at 50 Hz |
-| OneShot125 | 125–250 µs | LEDC at 2 kHz |
-| OneShot42 | 42–84 µs | LEDC at 2 kHz |
-| Multishot | 5–25 µs | LEDC at 32 kHz |
-| DShot150/300/600/1200 | Command values 48–2047 | ESP32_DSHOT |
+`ServoTesterApp` controls adapters through `setNormalized()` and
+`getNormalized()`, using a normalized range of 0.0–1.0 regardless of protocol.
+The adapters map this to their native values:
 
-**Known limitation:** The app clamps values to `minPulse..maxPulse` before
-calling `setRaw()`. It does not convert those configured values to the
-selected adapter's native domain. Consequently, OneShot and Multishot values
-are clamped by their adapters, and DShot gets the app-limited command range
-rather than a percentage mapped across its full range. The OLED labels the
-displayed number `P` even when the value is not a pulse width. Treat
-non-PWM operation as experimental; remove propellers and mechanical loads
-while validating signal behavior.
+| Adapter | Native range |
+| --- | --- |
+| PWM | Configured min/max microseconds |
+| OneShot125 | 125–250 µs |
+| OneShot42 | 42–84 µs |
+| Multishot | 5–25 µs |
+| DShot150/300/600/1200 | Command values 48–2047 |
 
-The DShot adapter calls the library's `arm()` during initialization and then
-sends the minimum command value. Hardware compatibility and arming behavior
-depend on the ESC and library.
+`setRaw()` writes a protocol-native value; the app instead controls output
+through normalized values. `getRaw()` supplies the native value for display.
+`setThrottle()` remains as a compatibility method and is not used by the app.
+The OLED shows PWM pulse width and angle; for non-PWM it shows throttle
+percentage and raw value.
+
+The DShot adapter requests arming on the first initialization in a runtime,
+then sends command 48. Rebuilding the adapter does not request arming again
+unless `DShotEscOutput::requestRearm()` is called. The app does not currently
+call that method; ESC-specific startup behavior must be validated on hardware.
 
 ## Sweep and displayed angle
 
-Sweep increments or decrements the current adapter raw value by `step`, at
-the configured interval, and reverses at the configured min/max endpoints.
-It has no acceleration or ramping. Since the app works on raw values, these
-limits and step values should not be assumed to have equivalent meaning
-across protocols.
+Sweep increments or decrements `_throttle01` by `stepNormalized()` at the
+configured interval and reverses at 0.0/1.0. PWM's normalized increment is
+`step / (maxPulse - minPulse)`; non-PWM uses `stepPercent / 100`. There is no
+acceleration or ramping.
 
-`angleFromPulse()` uses Arduino `map()` to map the adapter's `getRaw()` value
-from configured `minPulse..maxPulse` to `0..maxAngle`. `minAngle` is not used
-in this display calculation. The result is a command-derived display value,
-not measured position feedback.
+`angleFromThrottle()` maps `_throttle01` to `minAngle..maxAngle` with rounding.
+This is a display scale, not position feedback.
+
+When `maxPulse` changes, `recalculateFromMaxPulse()` computes a paired
+`maxAngle` that preserves the previous degrees-per-microsecond ratio; when
+`maxAngle` changes, `recalculateFromMaxAngle()` computes a paired `maxPulse`.
+Each operation rejects the whole change if the new paired value is outside
+its allowed range or the angle span is invalid. Editing `minPulse` or
+`minAngle` does not trigger a paired recalculation.
 
 ## Extending the firmware
 
@@ -158,7 +167,8 @@ not measured position feedback.
 3. Add encoder edit handling in `ServoTesterApp::handleMenuEncoder()`.
 4. Add its label and display value in `OledDisplay.cpp`.
 5. Add NVS load/save in `SettingsStorage.h`.
-6. Update the manual and README, including the setting's units and limits.
+6. Update app behavior if it affects output control.
+7. Update the manual and README, including the setting's units and limits.
 
 ### Add an operating mode
 
